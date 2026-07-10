@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard ร้านอาหาร | บ้านโฮม</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2/dist/chartjs-plugin-datalabels.min.js"></script>
+<style>
+/* ============================================================
+   Design tokens — validated categorical / sequential / status
+   palette (see dataviz skill, references/palette.md). Swap the
+   hex values here to re-theme; the rest of the file consumes
+   these roles, never raw hex.
+   ============================================================ */
+:root{
+  --surface-1:      #fcfcfb;
+  --page-plane:     #f9f9f7;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #898781;
+  --gridline:       #e1e0d9;
+  --baseline:       #c3c2b7;
+  --border:         rgba(11,11,11,0.10);
+  --good:           #006300;
+  --card-shadow:    0 1px 2px rgba(11,11,11,0.06), 0 1px 8px rgba(11,11,11,0.04);
+
+  --series-1: #2a78d6; /* blue    */
+  --series-2: #1baf7a; /* aqua    */
+  --series-3: #eda100; /* yellow  */
+  --series-4: #008300; /* green   */
+  --series-5: #4a3aa7; /* violet  */
+  --series-6: #e34948; /* red     */
+  --series-7: #e87ba4; /* magenta */
+  --series-8: #eb6834; /* orange  */
+
+  --seq-100:#cde2fb; --seq-200:#9ec5f4; --seq-300:#6da7ec; --seq-400:#3987e5;
+  --seq-450:#2a78d6; --seq-500:#256abf; --seq-600:#184f95; --seq-700:#0d366b;
+
+  --status-good:#0ca30c; --status-warn:#fab219; --status-serious:#ec835a; --status-critical:#d03b3b;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --surface-1:      #1a1a19;
+    --page-plane:     #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --card-shadow:    0 1px 2px rgba(0,0,0,0.3), 0 1px 10px rgba(0,0,0,0.25);
+
+    --series-1: #3987e5; --series-2: #199e70; --series-3: #c98500; --series-4: #008300;
+    --series-5: #9085e9; --series-6: #e66767; --series-7: #d55181; --series-8: #d95926;
+  }
+}
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; }
+body{
+  background:var(--page-plane);
+  color:var(--text-primary);
+  font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans Thai", sans-serif;
+  font-size:14px;
+  line-height:1.45;
+}
+a{ color:var(--series-1); }
+.wrap{ max-width:1320px; margin:0 auto; padding:20px 20px 64px; }
+
+/* ---------- header ---------- */
+header.top{
+  display:flex; align-items:flex-start; justify-content:space-between; gap:16px;
+  flex-wrap:wrap; margin-bottom:18px;
+}
+header.top h1{ font-size:22px; margin:0 0 4px; font-weight:700; }
+header.top p.sub{ margin:0; color:var(--text-secondary); font-size:13px; }
+.sync-box{ text-align:right; font-size:12px; color:var(--text-muted); }
+.sync-box button{
+  margin-top:6px; font-size:12px; padding:6px 12px; border-radius:8px;
+  border:1px solid var(--border); background:var(--surface-1); color:var(--text-primary);
+  cursor:pointer;
+}
+.sync-box button:hover{ border-color:var(--series-1); color:var(--series-1); }
+.sync-dot{ display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--status-good); margin-right:5px; }
+.sync-dot.err{ background:var(--status-critical); }
+.sync-dot.loading{ background:var(--status-warn); }
+
+/* ---------- banner ---------- */
+#diagBanner{
+  display:none; background:#fff7e6; border:1px solid var(--status-warn); color:#5a4300;
+  border-radius:10px; padding:12px 16px; margin-bottom:16px; font-size:13px;
+}
+@media (prefers-color-scheme: dark){
+  #diagBanner{ background:#332900; color:#ffd77a; border-color:#8a6d00; }
+}
+#diagBanner.show{ display:block; }
+
+/* ---------- filter bar ---------- */
+.filterbar{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  background:var(--surface-1); border:1px solid var(--border); border-radius:12px;
+  padding:10px 12px; margin-bottom:20px; box-shadow:var(--card-shadow);
+}
+.filterbar .presets{ display:flex; gap:6px; flex-wrap:wrap; }
+.chip{
+  border:1px solid var(--border); background:transparent; color:var(--text-secondary);
+  padding:7px 13px; border-radius:20px; font-size:13px; cursor:pointer; white-space:nowrap;
+}
+.chip:hover{ background:var(--page-plane); }
+.chip.active{ background:var(--series-1); border-color:var(--series-1); color:#fff; font-weight:600; }
+.filterbar .customrange{ display:flex; align-items:center; gap:6px; margin-left:auto; flex-wrap:wrap; }
+.filterbar input[type=date]{
+  border:1px solid var(--border); border-radius:8px; padding:6px 8px; background:var(--surface-1);
+  color:var(--text-primary); font-family:inherit; font-size:13px;
+}
+.filterbar .sep{ color:var(--text-muted); }
+.filterbar .rangelabel{ font-size:12px; color:var(--text-muted); width:100%; margin-top:2px; }
+
+/* ---------- KPI grid ---------- */
+.kpi-grid{
+  display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:24px;
+}
+@media (max-width:980px){ .kpi-grid{ grid-template-columns:repeat(2,1fr); } }
+@media (max-width:560px){ .kpi-grid{ grid-template-columns:1fr; } }
+.kpi{
+  background:var(--surface-1); border:1px solid var(--border); border-radius:12px;
+  padding:14px 16px; box-shadow:var(--card-shadow);
+}
+.kpi.muted{ opacity:0.85; }
+.kpi .label{ font-size:12.5px; color:var(--text-secondary); margin-bottom:6px; }
+.kpi .value{ font-size:26px; font-weight:700; color:var(--text-primary); letter-spacing:-0.3px; }
+.kpi .value small{ font-size:14px; font-weight:600; color:var(--text-secondary); }
+.kpi .delta{ font-size:12.5px; margin-top:6px; display:flex; align-items:center; gap:4px; }
+.kpi .delta.up{ color:var(--status-good); }
+.kpi .delta.down{ color:var(--status-critical); }
+.kpi .delta.flat{ color:var(--text-muted); }
+.kpi .foot{ font-size:11.5px; color:var(--text-muted); margin-top:6px; }
+
+/* ---------- chart cards ---------- */
+.section-title{ font-size:15px; font-weight:700; margin:26px 0 12px; color:var(--text-primary); }
+.chart-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:14px; }
+@media (max-width:900px){ .chart-grid{ grid-template-columns:1fr; } }
+.card{
+  background:var(--surface-1); border:1px solid var(--border); border-radius:12px;
+  padding:16px 16px 10px; box-shadow:var(--card-shadow); display:flex; flex-direction:column;
+}
+.card.full{ grid-column:1 / -1; }
+.card .card-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:10px; }
+.card h3{ font-size:14px; margin:0 0 2px; font-weight:700; }
+.card p.desc{ margin:0; font-size:12px; color:var(--text-muted); }
+.card .toggles{ display:flex; gap:6px; flex-shrink:0; }
+.mini-btn{
+  border:1px solid var(--border); background:transparent; color:var(--text-secondary);
+  font-size:11.5px; padding:4px 9px; border-radius:14px; cursor:pointer;
+}
+.mini-btn.active{ background:var(--text-primary); border-color:var(--text-primary); color:var(--surface-1); }
+.mini-btn:hover:not(.active){ background:var(--page-plane); }
+.canvas-wrap{ position:relative; width:100%; }
+.canvas-wrap.h280{ height:280px; }
+.canvas-wrap.h220{ height:220px; }
+.canvas-wrap canvas{ width:100% !important; height:100% !important; display:block; }
+.static-note{ font-size:11px; color:var(--status-serious); margin-top:8px; }
+.table-toggle{ font-size:12px; color:var(--series-1); background:none; border:none; cursor:pointer; padding:4px 0; margin-top:6px; text-align:left; }
+.table-view{ display:none; margin-top:8px; max-height:220px; overflow:auto; border-top:1px solid var(--gridline); }
+.table-view.show{ display:block; }
+.table-view table{ width:100%; border-collapse:collapse; font-size:12px; }
+.table-view th,.table-view td{ text-align:right; padding:5px 8px; border-bottom:1px solid var(--gridline); font-variant-numeric:tabular-nums; }
+.table-view th:first-child, .table-view td:first-child{ text-align:left; }
+.table-view th{ color:var(--text-secondary); font-weight:600; position:sticky; top:0; background:var(--surface-1); }
+
+/* ---------- big data table section ---------- */
+.datatable-wrap{ overflow:auto; border:1px solid var(--border); border-radius:12px; background:var(--surface-1); box-shadow:var(--card-shadow); }
+table.big{ width:100%; border-collapse:collapse; font-size:13px; }
+table.big th, table.big td{ padding:9px 12px; border-bottom:1px solid var(--gridline); text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+table.big th:first-child, table.big td:first-child, table.big th:nth-child(2), table.big td:nth-child(2){ text-align:left; white-space:normal; }
+table.big thead th{ position:sticky; top:0; background:var(--surface-1); color:var(--text-secondary); font-weight:600; cursor:pointer; user-select:none; }
+table.big tbody tr:hover{ background:var(--page-plane); }
+.rank-badge{ display:inline-block; min-width:20px; text-align:center; }
+
+footer.foot{ margin-top:36px; font-size:12px; color:var(--text-muted); border-top:1px solid var(--gridline); padding-top:16px; }
+footer.foot ul{ margin:6px 0 0; padding-left:18px; }
+footer.foot li{ margin-bottom:4px; }
+
+.loading-overlay{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:12px; }
+.empty-state{ padding:30px 0; text-align:center; color:var(--text-muted); font-size:13px; }
+</style>
+</head>
+<body data-palette="#2a78d6,#1baf7a,#eda100,#008300,#4a3aa7,#e34948,#e87ba4,#eb6834">
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <h1>Dashboard ยอดขายร้านอาหาร — บ้านโฮม</h1>
+      <p class="sub">ข้อมูลสดจาก Google Sheet (POS export) · เฉพาะยอดขายร้านอาหาร ตัดยอดรีสอร์ท/ห้องพักออกแล้ว</p>
+    </div>
+    <div class="sync-box">
+      <div><span class="sync-dot loading" id="syncDot"></span><span id="syncText">กำลังโหลดข้อมูล…</span></div>
+      <button id="refreshBtn" type="button">โหลดข้อมูลใหม่</button>
+    </div>
+  </header>
+
+  <div id="diagBanner"></div>
+
+  <div class="filterbar">
+    <div class="presets" id="presetRow">
+      <button class="chip" data-preset="7">7 วันล่าสุด</button>
+      <button class="chip" data-preset="30">30 วันล่าสุด</button>
+      <button class="chip" data-preset="thismonth">เดือนนี้</button>
+      <button class="chip" data-preset="lastmonth">เดือนที่แล้ว</button>
+      <button class="chip active" data-preset="all">ทั้งหมด</button>
+    </div>
+    <div class="customrange">
+      <input type="date" id="startDate">
+      <span class="sep">–</span>
+      <input type="date" id="endDate">
+      <button class="chip" id="applyCustom">กรอง</button>
+    </div>
+    <div class="rangelabel" id="rangeLabel"></div>
+  </div>
+
+  <div class="kpi-grid" id="kpiGrid"></div>
+
+  <div class="section-title">ยอดขายและเมนู</div>
+  <div class="chart-grid">
+    <div class="card full">
+      <div class="card-head">
+        <div><h3>แนวโน้มยอดขายรายวัน</h3><p class="desc">ยอดขายร้านอาหาร เทียบกับยอดรีสอร์ท (เพื่อบริบท) ตามช่วงวันที่เลือก</p></div>
+      </div>
+      <div class="canvas-wrap h280"><canvas id="chartDaily"></canvas></div>
+      <button class="table-toggle" data-target="tblDaily">แสดงตาราง ▾</button>
+      <div class="table-view" id="tblDaily"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div><h3>เมนูขายดี</h3><p class="desc">Top 10 ตามยอดขายหรือจำนวนที่ขาย</p></div>
+        <div class="toggles">
+          <button class="mini-btn active" data-topmode="revenue">ยอดขาย</button>
+          <button class="mini-btn" data-topmode="qty">จำนวน</button>
+        </div>
+      </div>
+      <div class="canvas-wrap h280"><canvas id="chartTopItems"></canvas></div>
+      <button class="table-toggle" data-target="tblTop">แสดงตาราง ▾</button>
+      <div class="table-view" id="tblTop"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div><h3>ยอดขายตามหมวดสินค้า</h3><p class="desc">เฉพาะหมวดร้านอาหาร (ไม่รวมรีสอร์ท/ห้องพัก)</p></div>
+      </div>
+      <div class="canvas-wrap h280"><canvas id="chartCategory"></canvas></div>
+      <button class="table-toggle" data-target="tblCategory">แสดงตาราง ▾</button>
+      <div class="table-view" id="tblCategory"></div>
+    </div>
+  </div>
+
+  <div class="section-title">การขายตามช่วงเวลา</div>
+  <div class="chart-grid">
+    <div class="card">
+      <div class="card-head">
+        <div><h3>ยอดขายตามชั่วโมง (ทุกรายการ)</h3><p class="desc">รวมร้านอาหาร+รีสอร์ท ตามช่วงวันที่เลือก (จากรายงานบิล ซึ่งไม่แยกหมวดสินค้า)</p></div>
+      </div>
+      <div class="canvas-wrap h220"><canvas id="chartHourAll"></canvas></div>
+      <button class="table-toggle" data-target="tblHourAll">แสดงตาราง ▾</button>
+      <div class="table-view" id="tblHourAll"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div><h3>ยอดขายตามมื้อ (ทุกรายการ)</h3><p class="desc">แบ่งช่วงเวลาเป็นมื้อ ตามช่วงวันที่เลือก</p></div>
+      </div>
+      <div class="canvas-wrap h220"><canvas id="chartMeal"></canvas></div>
+      <button class="table-toggle" data-target="tblMeal">แสดงตาราง ▾</button>
+      <div class="table-view" id="tblMeal"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div><h3>ช่วงเวลาขายดี เฉพาะร้านอาหาร</h3><p class="desc">จำนวนรายการที่ขายต่อชั่วโมง (เฉพาะหมวดร้านอาหาร)</p></div>
+      </div>
+      <div class="canvas-wrap h220"><canvas id="chartHourRestaurant"></canvas></div>
+      <p class="static-note">⚠ ข้อมูลนี้มาจากรายงาน "ยอดขายตามสินค้ารายชั่วโมง" ซึ่งไม่มีคอลัมน์วันที่ จึงเป็นยอดรวมทั้งช่วงข้อมูลที่มีในชีต ไม่ผูกกับตัวกรองวันที่ด้านบน</p>
+      <button class="table-toggle" data-target="tblHourRest">แสดงตาราง ▾</button>
+      <div class="table-view" id="tblHourRest"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div><h3>ยอดขายตามวันในสัปดาห์</h3><p class="desc">เฉพาะร้านอาหาร ตามช่วงวันที่เลือก</p></div>
+      </div>
+      <div class="canvas-wrap h220"><canvas id="chartWeekday"></canvas></div>
+      <button class="table-toggle" data-target="tblWeekday">แสดงตาราง ▾</button>
+      <div class="table-view" id="tblWeekday"></div>
+    </div>
+  </div>
+
+  <div class="section-title">การชำระเงินและรูปแบบบิล</div>
+  <div class="chart-grid">
+    <div class="card">
+      <div class="card-head"><div><h3>วิธีการชำระเงิน</h3><p class="desc">ทุกบิลในช่วงที่เลือก</p></div></div>
+      <div class="canvas-wrap h220"><canvas id="chartPayment"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><div><h3>ประเภทการสั่ง</h3><p class="desc">ทุกบิลในช่วงที่เลือก</p></div></div>
+      <div class="canvas-wrap h220"><canvas id="chartOrderType"></canvas></div>
+    </div>
+  </div>
+
+  <div class="section-title">ตารางเมนูขายดี (รายละเอียด)</div>
+  <div class="datatable-wrap">
+    <table class="big" id="itemsTable">
+      <thead>
+        <tr>
+          <th>#</th><th>เมนู</th><th>หมวด</th><th data-sort="qty">จำนวนขาย</th>
+          <th data-sort="revenue">ยอดขาย (บาท)</th><th data-sort="avgprice">ราคาเฉลี่ย</th><th data-sort="share">% ของยอดขายรวม</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <footer class="foot">
+    <div><strong>หมายเหตุวิธีคำนวณ</strong></div>
+    <ul>
+      <li>ตัดยอดรีสอร์ทออกโดยกรองหมวดสินค้า “รีสอร์ท” และ “ห้องพัก พูลวิลล่า” ออกจากทุกยอดที่ระบุว่า “เฉพาะร้านอาหาร”</li>
+      <li>“จำนวนบิล” และ “บาทต่อบิล” คำนวณจากรายงานยอดขายแยกตามบิลทั้งหมด (รวมรีสอร์ท) เนื่องจากรายงานนี้ไม่มีข้อมูลรายเมนูต่อบิลให้แยกได้ ไม่นับบิลที่ถูก Void</li>
+      <li>กราฟ “ช่วงเวลาขายดี เฉพาะร้านอาหาร” มาจากรายงานที่ไม่มีคอลัมน์วันที่ จึงแสดงยอดรวมทั้งช่วงข้อมูล ไม่ตอบสนองตัวกรองวันที่</li>
+      <li>ไม่แสดง “กำไร” เนื่องจากไฟล์ POS ที่ Export มายังไม่มีการบันทึกต้นทุนสินค้า (ต้นทุนเป็น 0 ทุกรายการ) หากใส่ต้นทุนในระบบ POS ภายหลัง สามารถแจ้งให้เพิ่มกราฟกำไร/ margin ได้</li>
+      <li>ข้อมูลดึงสดจาก Google Sheet ทุกครั้งที่เปิดหน้านี้ / กดโหลดข้อมูลใหม่ (รีเฟรชอัตโนมัติทุก 10 นาที)</li>
+    </ul>
+    <div id="lastSyncFoot" style="margin-top:8px;"></div>
+  </footer>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>
