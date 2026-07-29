@@ -819,12 +819,28 @@ function renderMeal(range) {
     data: { labels, datasets: [{ data: values, backgroundColor: cssVar("--series-5"), borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: "bottom", barThickness: 30 }] },
     options: {
       responsive: true, maintainAspectRatio: false,
+      // เว้นที่ด้านบนไว้ให้ตัวเลขกำกับของแท่งที่สูงที่สุด (ไม่งั้นจะถูกตัดหายไปนอกกรอบ)
+      layout: { padding: { top: 22 } },
       plugins: {
         legend: { display: false },
         tooltip: Object.assign(tooltipBase(), { callbacks: { label: (item) => `${fmtBaht(item.raw)} บาท` } }),
-        datalabels: { display: true, anchor: "end", align: "top", color: baseTextColor(), font: { size: 11 }, formatter: (v) => fmtCompact(v) },
+        datalabels: {
+          display: true,
+          anchor: "end", align: "top",
+          clamp: true, clip: false,
+          color: baseTextColor(), font: { size: 11 },
+          formatter: (v) => fmtCompact(v),
+        },
       },
-      scales: commonScales(),
+      scales: commonScales({
+        y: {
+          beginAtZero: true,
+          grace: "5%", // ดันเพดานแกน Y ขึ้นอีกนิด เผื่อที่ให้ label
+          grid: { color: baseGridColor(), drawTicks: false },
+          border: { display: false },
+          ticks: { color: baseMutedColor(), callback: (v) => fmtCompact(v), maxTicksLimit: 6 },
+        },
+      }),
     },
   });
   renderTableView("tblMeal", ["มื้อ", "ยอดขาย (บาท)"], labels.map((l, i) => [l, fmtBaht(values[i])]));
