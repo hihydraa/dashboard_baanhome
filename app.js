@@ -27,8 +27,12 @@ const CONFIG = {
   // ---- แท็บต้นทุนใน MENU_SHEET_ID ----
   MENU_TAB: { name: "menu_cost", gid: null },
 
-  // ---- ตัวคูณเกณฑ์ MM% เริ่มต้น (0.7 = Kasavana-Smith, 1 = ค่าเฉลี่ยตรงๆ) ----
+  // ---- ตัวคูณเกณฑ์แกนตั้งเริ่มต้น (0.7 = Kasavana-Smith, 1 = ค่าเฉลี่ยตรงๆ) ----
   MM_FACTOR_DEFAULT: 0.7,
+
+  // ---- ตัวชี้วัดเริ่มต้นของแผนภาพ Menu Engineering ----
+  ME_Y_DEFAULT: "cmshare",   // "cmshare" = %CM สัดส่วนกำไรรวม | "mm" = %MM สัดส่วนจำนวนจาน
+  ME_X_DEFAULT: "cm",        // "cm" = CM ต่อจาน (บาท) | "margin" = %กำไรต่อจาน
 
   // ---- หมวดสินค้าที่ถือว่าเป็น "รีสอร์ท/ห้องพัก" ให้ตัดออกจากยอดร้านอาหาร ----
   RESORT_CATEGORIES: ["รีสอร์ท", "ห้องพัก พูลวิลล่า"],
@@ -1064,8 +1068,8 @@ function renderTableView(containerId, headers, rows) {
 
 /* ========================================================================
    Menu Engineering
-   แกนตั้ง = MM% (สัดส่วนจำนวนจานที่ขายได้ในกลุ่มเดียวกัน)
-   แกนนอน = CM ต่อจาน (ราคาขาย - ต้นทุนวัตถุดิบ)
+   แกนตั้ง  = %CM (สัดส่วนกำไรรวม) หรือ %MM (สัดส่วนจำนวนจาน) — เลือกได้
+   แกนนอน  = CM ต่อจาน (บาท) หรือ %กำไรต่อจาน — เลือกได้
    จัดกลุ่มตามหลัก Kasavana-Smith: Star / Horse / Puzzle / Dog
    ======================================================================== */
 const ME_CLASSES = {
@@ -1076,21 +1080,54 @@ const ME_CLASSES = {
 };
 const ME_ORDER = ["Star", "Puzzle", "Horse", "Dog"];
 
-let meGroup = null;          // กลุ่มเปรียบเทียบที่กำลังดูอยู่
-let meFactor = CONFIG.MM_FACTOR_DEFAULT;
-let meFilter = "ALL";        // ตัวกรองตารางด้านล่าง
+// แกนตั้ง — ทั้งสองแบบเป็น "สัดส่วน" ที่รวมกันได้ 100% จึงใช้เกณฑ์เดียวกันได้
+const ME_Y = {
+  cmshare: {
+    short: "%CM",
+    axis: "%CM — เมนูนี้สร้างกำไรกี่ % ของกำไรรวมทั้งกลุ่ม",
+    get: (r) => r.cmShare,
+  },
+  mm: {
+    short: "%MM",
+    axis: "%MM — เมนูนี้ขายได้กี่ % ของจำนวนจานรวมทั้งกลุ่ม",
+    get: (r) => r.mm,
+  },
+};
+// แกนนอน
+const ME_X = {
+  cm: {
+    short: "CM ต่อจาน",
+    axis: "CM ต่อจาน (บาท) — กำไรเบื้องต้นก่อนหักค่าใช้จ่าย",
+    get: (r) => r.cm,
+    isPct: false,
+    fmt: (v) => `${fmtBaht(v)} บาท`,
+  },
+  margin: {
+    short: "%กำไรต่อจาน",
+    axis: "%กำไรต่อจาน — CM ÷ ราคาขาย",
+    get: (r) => r.margin,
+    isPct: true,
+    fmt: (v) => `${(v * 100).toFixed(1)}%`,
+  },
+};
+
+let meGroup = null;                        // กลุ่มเปรียบเทียบที่กำลังดูอยู่
+let meFactor = CONFIG.MM_FACTOR_DEFAULT;   // ตัวคูณเกณฑ์แกนตั้ง
+let meYMetric = CONFIG.ME_Y_DEFAULT;       // ตัวชี้วัดแกนตั้ง
+let meXMetric = CONFIG.ME_X_DEFAULT;       // ตัวชี้วัดแกนนอน
+let meFilter = "ALL";                      // ตัวกรองตารางด้านล่าง
 let meRows = [];
+let meStats = null;
 
 function meAvailableGroups() {
   const seen = new Set();
   DATA.menucost.forEach((m) => seen.add(m.group));
   const list = [...seen];
-  // เรียงให้ "อาหาร" มาก่อนเสมอ
   list.sort((a, b) => (a === "อาหาร" ? -1 : b === "อาหาร" ? 1 : a.localeCompare(b, "th")));
   return list;
 }
 
-function computeMenuEngineering(range, group, factor) {
+function computeMenuEngineering(range, group, factor, yMetric, xMetric) {
   // ยอดขายจริงในช่วงที่เลือก (เฉพาะฝั่งร้านอาหาร)
   const sales = {};
   DATA.items.forEach((r) => {
@@ -1106,33 +1143,46 @@ function computeMenuEngineering(range, group, factor) {
     if (m.group !== group) return;
     const s = sales[m.name];
     if (!s || s.qty <= 0) return;
+    const cm = m.price - m.cost;
     rows.push({
       name: m.name, group: m.group, source: m.source,
-      price: m.price, cost: m.cost, cm: m.price - m.cost,
+      price: m.price, cost: m.cost, cm,
+      margin: m.price > 0 ? cm / m.price : 0,
       qty: s.qty, net: s.net,
+      revenue: m.price * s.qty,      // รายได้ตามราคาตั้ง ใช้เป็นฐานของ %กำไรถ่วงน้ำหนัก
+      cmTotal: cm * s.qty,
     });
   });
 
   const totQty = rows.reduce((a, r) => a + r.qty, 0);
-  const totCM = rows.reduce((a, r) => a + r.cm * r.qty, 0);
-  const cmThr = totQty > 0 ? totCM / totQty : 0;          // CM เฉลี่ยถ่วงน้ำหนัก
-  const mmThr = rows.length > 0 ? factor / rows.length : 0;
+  const totCM  = rows.reduce((a, r) => a + r.cmTotal, 0);
+  const totRev = rows.reduce((a, r) => a + r.revenue, 0);
 
+  // เกณฑ์แกนตั้ง: ถ้าทุกเมนูมีสัดส่วนเท่ากันจะได้ 1/N — คูณด้วยตัวคูณเพื่อผ่อนเกณฑ์
+  const yThr = rows.length > 0 ? factor / rows.length : 0;
+  // เกณฑ์แกนนอน: ค่าเฉลี่ยถ่วงน้ำหนัก
+  const xThr = xMetric === "margin"
+    ? (totRev > 0 ? totCM / totRev : 0)
+    : (totQty > 0 ? totCM / totQty : 0);
+
+  const yGet = ME_Y[yMetric].get, xGet = ME_X[xMetric].get;
   rows.forEach((r) => {
     r.mm = totQty > 0 ? r.qty / totQty : 0;
-    r.cmTotal = r.cm * r.qty;
-    const hiMM = r.mm >= mmThr;
-    const hiCM = r.cm >= cmThr;
-    r.cls = hiMM && hiCM ? "Star" : hiMM && !hiCM ? "Horse" : !hiMM && hiCM ? "Puzzle" : "Dog";
+    r.cmShare = totCM > 0 ? r.cmTotal / totCM : 0;
+    r.yVal = yGet(r);
+    r.xVal = xGet(r);
+    const hiY = r.yVal >= yThr;
+    const hiX = r.xVal >= xThr;
+    r.cls = hiY && hiX ? "Star" : hiY && !hiX ? "Horse" : !hiY && hiX ? "Puzzle" : "Dog";
   });
   rows.sort((a, b) => b.cmTotal - a.cmTotal);
 
-  // ครอบคลุมแค่ไหน — เทียบกับเมนูทั้งหมดที่ขายจริงในช่วงนี้
   let allQty = 0, allNet = 0, allMenus = 0;
   Object.keys(sales).forEach((n) => { allMenus++; allQty += sales[n].qty; allNet += sales[n].net; });
   const covered = rows.reduce((a, r) => a + r.net, 0);
 
-  return { rows, cmThr, mmThr, totQty, coverage: { menus: rows.length, allMenus, net: covered, allNet } };
+  return { rows, yThr, xThr, totQty, totCM, totRev,
+           coverage: { menus: rows.length, allMenus, net: covered, allNet } };
 }
 
 // เส้นแบ่ง 4 ควอดรันต์ + ป้ายกำกับมุม
@@ -1174,7 +1224,6 @@ function renderMenuEngineering(range) {
   if (wrapEmpty) wrapEmpty.style.display = "none";
   if (body) body.style.display = "";
 
-  // เติมตัวเลือกกลุ่มครั้งแรก
   const sel = document.getElementById("meGroupSel");
   const groups = meAvailableGroups();
   if (sel && sel.options.length !== groups.length) {
@@ -1182,11 +1231,14 @@ function renderMenuEngineering(range) {
   }
   if (!meGroup || !groups.includes(meGroup)) meGroup = groups[0] || null;
   if (sel) sel.value = meGroup;
-  const fsel = document.getElementById("meFactorSel");
-  if (fsel) fsel.value = String(meFactor);
+  const fsel = document.getElementById("meFactorSel"); if (fsel) fsel.value = String(meFactor);
+  const ysel = document.getElementById("meYSel");      if (ysel) ysel.value = meYMetric;
+  const xsel = document.getElementById("meXSel");      if (xsel) xsel.value = meXMetric;
 
-  const res = computeMenuEngineering(range, meGroup, meFactor);
+  const yCfg = ME_Y[meYMetric], xCfg = ME_X[meXMetric];
+  const res = computeMenuEngineering(range, meGroup, meFactor, meYMetric, meXMetric);
   meRows = res.rows;
+  meStats = res;
 
   // ---- การ์ดสรุป 4 กลุ่ม ----
   const grid = document.getElementById("meKpi");
@@ -1194,31 +1246,35 @@ function renderMenuEngineering(range) {
     grid.innerHTML = ME_ORDER.map((k) => {
       const list = res.rows.filter((r) => r.cls === k);
       const cm = list.reduce((a, r) => a + r.cmTotal, 0);
+      const share = res.totCM > 0 ? (cm / res.totCM) * 100 : 0;
       const c = ME_CLASSES[k];
       return `<div class="kpi me-kpi" style="border-left:4px solid ${cssVar(c.varName)}">
         <div class="label">${k} · ${c.th}</div>
         <div class="value">${fmtInt(list.length)} <small>เมนู</small></div>
-        <div class="foot">CM รวม ${fmtBaht(cm)} บาท</div>
+        <div class="foot">CM รวม ${fmtBaht(cm)} บาท · ${share.toFixed(1)}% ของกำไรกลุ่มนี้</div>
       </div>`;
     }).join("");
   }
 
-  // ---- ข้อความครอบคลุม ----
+  // ---- ข้อความครอบคลุม + เกณฑ์ ----
   const note = document.getElementById("meCoverage");
   if (note) {
     const cov = res.coverage;
     const pct = cov.allNet > 0 ? (cov.net / cov.allNet) * 100 : 0;
-    note.textContent = `วิเคราะห์ได้ ${fmtInt(cov.menus)} เมนูที่มีต้นทุนแล้ว จากเมนูที่ขายจริงในช่วงนี้ทั้งหมด ${fmtInt(cov.allMenus)} เมนู ` +
+    note.textContent =
+      `วิเคราะห์ได้ ${fmtInt(cov.menus)} เมนูที่มีต้นทุนแล้ว จากเมนูที่ขายจริงในช่วงนี้ทั้งหมด ${fmtInt(cov.allMenus)} เมนู ` +
       `(คิดเป็น ${pct.toFixed(1)}% ของยอดขายฝั่งร้านอาหารในช่วงที่เลือก) · ` +
-      `เกณฑ์ MM% = ${(res.mmThr * 100).toFixed(2)}% · CM เฉลี่ยถ่วงน้ำหนัก = ${fmtBaht(res.cmThr)} บาท/จาน`;
+      `เกณฑ์ ${yCfg.short} = ${(res.yThr * 100).toFixed(2)}% · ` +
+      `เกณฑ์ ${xCfg.short} = ${xCfg.fmt(res.xThr)} (ค่าเฉลี่ยถ่วงน้ำหนัก)`;
   }
 
   // ---- Scatter ----
+  const toX = (v) => (xCfg.isPct ? v * 100 : v);
   const datasets = ME_ORDER.map((k) => {
     const c = ME_CLASSES[k];
     return {
       label: `${k} · ${c.th}`,
-      data: res.rows.filter((r) => r.cls === k).map((r) => ({ x: r.cm, y: r.mm * 100, r0: r })),
+      data: res.rows.filter((r) => r.cls === k).map((r) => ({ x: toX(r.xVal), y: r.yVal * 100, r0: r })),
       backgroundColor: cssVar(c.varName),
       borderColor: cssVar(c.varName),
       pointRadius: 5, pointHoverRadius: 8,
@@ -1235,16 +1291,17 @@ function renderMenuEngineering(range) {
       plugins: {
         legend: { position: "bottom", labels: { color: baseTextColor(), boxWidth: 10, usePointStyle: true, pointStyle: "circle", font: { size: 11 } } },
         datalabels: { display: false },
-        meQuadrants: { xLine: res.cmThr, yLine: res.mmThr * 100, lineColor: baseGridColor(), labelColor: baseMutedColor() },
+        meQuadrants: { xLine: toX(res.xThr), yLine: res.yThr * 100, lineColor: baseGridColor(), labelColor: baseMutedColor() },
         tooltip: Object.assign(tooltipBase(), {
           callbacks: {
             title: (items) => items[0].raw.r0.name,
             label: (item) => {
               const r = item.raw.r0;
               return [
-                `ขายได้ ${fmtInt(r.qty)} จาน (MM% ${(r.mm * 100).toFixed(2)}%)`,
+                `ขายได้ ${fmtInt(r.qty)} จาน · %MM ${(r.mm * 100).toFixed(2)}%`,
+                `CM รวม ${fmtBaht(r.cmTotal)} บาท · %CM ${(r.cmShare * 100).toFixed(2)}%`,
                 `ราคาขาย ${fmtBaht(r.price)} · ต้นทุน ${fmtBaht(r.cost)} บาท`,
-                `CM ต่อจาน ${fmtBaht(r.cm)} บาท · CM รวม ${fmtBaht(r.cmTotal)} บาท`,
+                `CM ต่อจาน ${fmtBaht(r.cm)} บาท · %กำไร ${(r.margin * 100).toFixed(1)}%`,
                 `กลุ่ม ${r.cls} · ${ME_CLASSES[r.cls].th}`,
               ];
             },
@@ -1253,13 +1310,13 @@ function renderMenuEngineering(range) {
       },
       scales: {
         x: {
-          title: { display: true, text: "CM ต่อจาน (บาท) — กำไรเบื้องต้นก่อนหักค่าใช้จ่าย", color: baseMutedColor(), font: { size: 11 } },
+          title: { display: true, text: xCfg.axis, color: baseMutedColor(), font: { size: 11 } },
           grid: { color: baseGridColor() },
-          ticks: { color: baseMutedColor(), callback: (v) => fmtCompact(v) },
+          ticks: { color: baseMutedColor(), callback: (v) => (xCfg.isPct ? `${v}%` : fmtCompact(v)) },
           border: { display: false },
         },
         y: {
-          title: { display: true, text: "MM % — สัดส่วนจำนวนจานที่ขายได้", color: baseMutedColor(), font: { size: 11 } },
+          title: { display: true, text: yCfg.axis, color: baseMutedColor(), font: { size: 11 } },
           beginAtZero: true,
           grid: { color: baseGridColor() },
           ticks: { color: baseMutedColor(), callback: (v) => `${v}%` },
@@ -1277,7 +1334,7 @@ function renderMETable() {
   if (!tbody) return;
   const rows = meFilter === "ALL" ? meRows : meRows.filter((r) => r.cls === meFilter);
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:18px;">ไม่มีเมนูในกลุ่มนี้</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;color:var(--text-muted);padding:18px;">ไม่มีเมนูในกลุ่มนี้</td></tr>`;
     return;
   }
   tbody.innerHTML = rows.map((r, i) => {
@@ -1287,15 +1344,85 @@ function renderMETable() {
       <td>${escapeHtml(r.name)}</td>
       <td style="text-align:left;"><span class="me-badge" style="background:${cssVar(c.varName)}">${r.cls}</span></td>
       <td>${fmtInt(r.qty)}</td>
+      <td>${(r.cmShare * 100).toFixed(2)}%</td>
       <td>${(r.mm * 100).toFixed(2)}%</td>
       <td>${fmtBaht(r.price)}</td>
       <td>${fmtBaht(r.cost)}</td>
       <td>${fmtBaht(r.cm)}</td>
+      <td>${(r.margin * 100).toFixed(1)}%</td>
       <td><strong>${fmtBaht(r.cmTotal)}</strong></td>
       <td style="text-align:left;font-size:12px;color:var(--text-secondary);">${escapeHtml(c.advice)}</td>
     </tr>`;
   }).join("");
 }
+
+
+/* ========================================================================
+   Export ตารางเป็นไฟล์ CSV
+   ใส่ BOM ไว้ข้างหน้าเพื่อให้ Excel อ่านภาษาไทยได้ถูกต้อง
+   ======================================================================== */
+function csvEscape(v) {
+  const s = String(v == null ? "" : v).replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function tableToCSV(tableEl) {
+  const lines = [];
+  tableEl.querySelectorAll("tr").forEach((tr) => {
+    const cells = [...tr.querySelectorAll("th,td")];
+    if (!cells.length) return;
+    // ข้ามแถวที่เป็นข้อความแจ้งเตือน (colspan เต็มแถว)
+    if (cells.length === 1 && cells[0].hasAttribute("colspan")) return;
+    lines.push(cells.map((c) => csvEscape(c.textContent)).join(","));
+  });
+  return lines.join("\r\n");
+}
+
+function downloadCSV(csvText, filename) {
+  const blob = new Blob(["\ufeff" + csvText], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+function exportTableById(elementId, label) {
+  const host = document.getElementById(elementId);
+  if (!host) return false;
+  const tbl = host.tagName === "TABLE" ? host : host.querySelector("table");
+  if (!tbl || !tbl.querySelector("tbody tr")) return false;
+  const csv = tableToCSV(tbl);
+  if (!csv) return false;
+  const rangeTxt = currentRange ? `_${currentRange.start}_ถึง_${currentRange.end}` : "";
+  downloadCSV(csv, `${label}${rangeTxt}.csv`.replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, "_"));
+  return true;
+}
+
+function flashBtn(btn, text, cls) {
+  const original = btn.dataset.origText || btn.textContent;
+  btn.dataset.origText = original;
+  btn.textContent = text;
+  btn.classList.add(cls);
+  clearTimeout(btn.__flashTimer);
+  btn.__flashTimer = setTimeout(() => {
+    btn.textContent = original;
+    btn.classList.remove("done", "fail");
+  }, 1800);
+}
+
+function wireCsvButtons() {
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".csv-btn");
+    if (!btn) return;
+    const ok = exportTableById(btn.dataset.csv, btn.dataset.name || btn.dataset.csv);
+    flashBtn(btn, ok ? "✓ ดาวน์โหลดแล้ว" : "ไม่มีข้อมูลให้ดาวน์โหลด", ok ? "done" : "fail");
+  });
+}
+
 
 /* ========================================================================
    Diagnostics banner
@@ -1400,9 +1527,15 @@ function wireUI() {
   if (gsel) gsel.addEventListener("change", () => { meGroup = gsel.value; meFilter = "ALL"; syncMEFilterChips(); renderMenuEngineering(currentRange); });
   const fsel = document.getElementById("meFactorSel");
   if (fsel) fsel.addEventListener("change", () => { meFactor = parseFloat(fsel.value) || 0.7; renderMenuEngineering(currentRange); });
+  const ysel = document.getElementById("meYSel");
+  if (ysel) ysel.addEventListener("change", () => { meYMetric = ME_Y[ysel.value] ? ysel.value : "cmshare"; renderMenuEngineering(currentRange); });
+  const xsel = document.getElementById("meXSel");
+  if (xsel) xsel.addEventListener("change", () => { meXMetric = ME_X[xsel.value] ? xsel.value : "cm"; renderMenuEngineering(currentRange); });
   document.querySelectorAll(".chip[data-mefilter]").forEach((btn) => {
     btn.addEventListener("click", () => { meFilter = btn.dataset.mefilter; syncMEFilterChips(); renderMETable(); });
   });
+
+  wireCsvButtons();
 
   document.getElementById("refreshBtn").addEventListener("click", () => boot(true));
 
