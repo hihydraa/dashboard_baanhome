@@ -178,6 +178,27 @@ table.big thead th{ position:sticky; top:0; background:var(--surface-1); color:v
 table.big tbody tr:hover{ background:var(--page-plane); }
 .rank-badge{ display:inline-block; min-width:20px; text-align:center; }
 
+/* ---------- menu engineering ---------- */
+.canvas-wrap.h420{ height:420px; }
+.me-controls{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+.me-controls label{ font-size:12.5px; color:var(--text-secondary); }
+.me-controls select{
+  font-size:12.5px; padding:6px 10px; border-radius:8px; background:var(--surface-1);
+  color:var(--text-primary); border:1px solid var(--border); cursor:pointer;
+}
+.me-kpi{ padding-left:14px; }
+.me-badge{
+  display:inline-block; color:#fff; font-size:11px; font-weight:700;
+  padding:2px 8px; border-radius:999px; letter-spacing:0.2px;
+}
+.me-coverage{ font-size:12px; color:var(--text-muted); margin:10px 0 0; line-height:1.6; }
+.me-filters{ display:flex; gap:6px; flex-wrap:wrap; margin:14px 0 10px; }
+.me-empty{
+  border:1px dashed var(--baseline); border-radius:12px; padding:22px;
+  color:var(--text-secondary); font-size:13px; background:var(--surface-1); line-height:1.7;
+}
+.me-legend{ font-size:12px; color:var(--text-muted); margin-top:10px; line-height:1.7; }
+
 footer.foot{ margin-top:36px; font-size:12px; color:var(--text-muted); border-top:1px solid var(--gridline); padding-top:16px; }
 footer.foot ul{ margin:6px 0 0; padding-left:18px; }
 footer.foot li{ margin-bottom:4px; }
@@ -307,6 +328,72 @@ footer.foot li{ margin-bottom:4px; }
     </div>
   </div>
 
+  <div class="section-title">Menu Engineering — วิเคราะห์กำไรรายเมนู</div>
+
+  <div id="meEmpty" class="me-empty" style="display:none;">
+    <strong>ยังแสดงผลไม่ได้</strong><br>
+    หน้านี้ต้องใช้ข้อมูลต้นทุนจากไฟล์ <code>menu_cost</code> ตรวจสอบว่า:
+    <ul style="margin:8px 0 0 18px;">
+      <li>ไฟล์ต้นทุนแชร์เป็น <strong>“ทุกคนที่มีลิงก์ - ดูได้”</strong></li>
+      <li>ค่า <code>MENU_SHEET_ID</code> ใน <code>app.js</code> ตรงกับไฟล์ต้นทุน</li>
+      <li>มีแท็บชื่อ <code>menu_cost</code> และคอลัมน์ K “ต้นทุนที่ใช้” มีค่าแล้ว</li>
+    </ul>
+  </div>
+
+  <div id="meBody">
+    <div class="me-controls">
+      <label for="meGroupSel">กลุ่มเปรียบเทียบ</label>
+      <select id="meGroupSel"></select>
+      <label for="meFactorSel">เกณฑ์ MM%</label>
+      <select id="meFactorSel">
+        <option value="0.7">70% ของค่าเฉลี่ย (Kasavana-Smith)</option>
+        <option value="1">ค่าเฉลี่ยตรงๆ</option>
+        <option value="0.5">50% ของค่าเฉลี่ย (เข้มน้อยกว่า)</option>
+      </select>
+    </div>
+
+    <div class="kpi-grid" id="meKpi"></div>
+
+    <div class="chart-grid" style="margin-top:14px;">
+      <div class="card full">
+        <div class="card-head">
+          <div>
+            <h3>แผนภาพ 4 ควอดรันต์</h3>
+            <p class="desc">แกนนอน = กำไรต่อจาน (CM) · แกนตั้ง = สัดส่วนจำนวนที่ขายได้ (MM%) · เส้นประคือเกณฑ์แบ่งกลุ่ม · ใช้ยอดขายตามช่วงวันที่ที่เลือกด้านบน</p>
+          </div>
+        </div>
+        <div class="canvas-wrap h420"><canvas id="chartME"></canvas></div>
+        <p class="me-coverage" id="meCoverage"></p>
+        <div class="me-legend">
+          <strong>ดาวเด่น (Star)</strong> ขายดี กำไรสูง → รักษามาตรฐาน ·
+          <strong>ม้าแก่ (Horse)</strong> ขายดี กำไรน้อย → ทบทวนราคา/ลดต้นทุน ·
+          <strong>ปริศนา (Puzzle)</strong> ขายน้อย กำไรสูง → ดันยอดขาย ·
+          <strong>สุนัข (Dog)</strong> ขายน้อย กำไรน้อย → พิจารณาตัดออก
+        </div>
+      </div>
+    </div>
+
+    <div class="me-filters">
+      <button class="chip active" data-mefilter="ALL">ทั้งหมด</button>
+      <button class="chip" data-mefilter="Star">ดาวเด่น</button>
+      <button class="chip" data-mefilter="Puzzle">ปริศนา</button>
+      <button class="chip" data-mefilter="Horse">ม้าแก่</button>
+      <button class="chip" data-mefilter="Dog">สุนัข</button>
+    </div>
+
+    <div class="datatable-wrap">
+      <table class="big" id="meTable">
+        <thead>
+          <tr>
+            <th>#</th><th>เมนู</th><th>กลุ่ม</th><th>จำนวนขาย</th><th>MM %</th>
+            <th>ราคาขาย</th><th>ต้นทุน/จาน</th><th>CM/จาน</th><th>CM รวม</th><th>คำแนะนำ</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="section-title">ตารางเมนูขายดี (รายละเอียด)</div>
   <div class="datatable-wrap">
     <table class="big" id="itemsTable">
@@ -326,7 +413,9 @@ footer.foot li{ margin-bottom:4px; }
       <li>ตัดยอดรีสอร์ทออกโดยกรองหมวดสินค้า “รีสอร์ท” และ “ห้องพัก พูลวิลล่า” ออกจากทุกยอดที่ระบุว่า “เฉพาะร้านอาหาร”</li>
       <li>“จำนวนบิล” และ “บาทต่อบิล” คำนวณจากรายงานยอดขายแยกตามบิลทั้งหมด (รวมรีสอร์ท) เนื่องจากรายงานนี้ไม่มีข้อมูลรายเมนูต่อบิลให้แยกได้ ไม่นับบิลที่ถูก Void</li>
       <li>กราฟ “ช่วงเวลาขายดี เฉพาะร้านอาหาร” มาจากรายงานที่ไม่มีคอลัมน์วันที่ จึงแสดงยอดรวมทั้งช่วงข้อมูล ไม่ตอบสนองตัวกรองวันที่</li>
-      <li>ไม่แสดง “กำไร” เนื่องจากไฟล์ POS ที่ Export มายังไม่มีการบันทึกต้นทุนสินค้า (ต้นทุนเป็น 0 ทุกรายการ) หากใส่ต้นทุนในระบบ POS ภายหลัง สามารถแจ้งให้เพิ่มกราฟกำไร/ margin ได้</li>
+      <li>ไฟล์ POS ที่ Export มาไม่มีต้นทุนสินค้า (เป็น 0 ทุกรายการ) หน้า Menu Engineering จึงดึงต้นทุนจากไฟล์ <code>menu_cost</code> แยกต่างหาก โดยใช้ช่อง “ต้นทุนที่ใช้” ซึ่งมาจากสูตร BOM หรือค่าที่กรอกเอง</li>
+      <li>Menu Engineering คำนวณ MM% และ CM จาก<strong>ยอดขายจริงตามช่วงวันที่ที่เลือก</strong> เฉพาะเมนูที่มีต้นทุนแล้ว เกณฑ์แบ่งกลุ่มคำนวณแยกตาม “กลุ่มเปรียบเทียบ” เพื่อไม่ให้เครื่องดื่มไปเทียบกับอาหารจานหลัก</li>
+      <li>ไฟล์ export จาก POS มี 2 รูปแบบปนกัน บางช่วงคอลัมน์เลื่อนไป 1 ช่อง ทำให้ “จำนวนการขาย” เก็บยอดเงินแทนจำนวนจาน ระบบตรวจจับและแก้ค่าให้อัตโนมัติแล้ว แต่ควร export ใหม่ให้เป็นรูปแบบเดียวกัน</li>
       <li>ข้อมูลดึงสดจาก Google Sheet ทุกครั้งที่เปิดหน้านี้ / กดโหลดข้อมูลใหม่ (รีเฟรชอัตโนมัติทุก 10 นาที)</li>
     </ul>
     <div id="lastSyncFoot" style="margin-top:8px;"></div>
