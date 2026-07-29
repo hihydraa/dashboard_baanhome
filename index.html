@@ -194,6 +194,7 @@ table.big tbody tr:hover{ background:var(--page-plane); }
   font-size:12.5px; padding:6px 10px; border-radius:8px; background:var(--surface-1);
   color:var(--text-primary); border:1px solid var(--border); cursor:pointer;
 }
+.me-controls select:disabled{ opacity:0.45; cursor:not-allowed; }
 .me-kpi{ padding-left:14px; }
 .me-badge{
   display:inline-block; color:#fff; font-size:11px; font-weight:700;
@@ -254,7 +255,7 @@ footer.foot li{ margin-bottom:4px; }
   <div class="chart-grid">
     <div class="card full">
       <div class="card-head">
-        <div><h3>แนวโน้มยอดขายรายวัน</h3><p class="desc">ยอดขายร้านอาหาร เทียบกับยอดรีสอร์ท (เพื่อบริบท) ตามช่วงวันที่เลือก</p></div>
+        <div><h3>แนวโน้มยอดขายรายวัน</h3><p class="desc">ยอดขายร้านอาหาร เทียบกับยอดรีสอร์ท ตามช่วงวันที่เลือก</p></div>
       </div>
       <div class="canvas-wrap h280"><canvas id="chartDaily"></canvas></div>
       <button class="table-toggle" data-target="tblDaily">แสดงตาราง ▾</button><button class="csv-btn" data-csv="tblDaily" data-name="ยอดขายรายวัน">⬇ CSV</button>
@@ -362,6 +363,12 @@ footer.foot li{ margin-bottom:4px; }
         <option value="cm">CM ต่อจาน (บาท)</option>
         <option value="margin">%กำไรต่อจาน</option>
       </select>
+      <label for="meCatSel">หมวดสินค้า</label>
+      <select id="meCatSel"><option value="ALL">ทุกหมวด</option></select>
+      <select id="meScopeSel" title="เลือกว่าจะใช้เกณฑ์ของทั้งกลุ่ม หรือคำนวณเกณฑ์ใหม่เฉพาะหมวดที่เลือก">
+        <option value="group">ใช้เกณฑ์ของทั้งกลุ่ม</option>
+        <option value="category">คำนวณเกณฑ์ใหม่เฉพาะหมวดนี้</option>
+      </select>
       <label for="meFactorSel">ตัวคูณเกณฑ์แกนตั้ง</label>
       <select id="meFactorSel">
         <option value="0.7">0.7 — 70% ของค่าเฉลี่ย (Kasavana-Smith)</option>
@@ -404,7 +411,7 @@ footer.foot li{ margin-bottom:4px; }
       <table class="big" id="meTable">
         <thead>
           <tr>
-            <th>#</th><th>เมนู</th><th>กลุ่ม</th><th>จำนวนขาย</th>
+            <th>#</th><th>เมนู</th><th>หมวด</th><th>กลุ่ม</th><th>จำนวนขาย</th>
             <th>%CM</th><th>%MM</th>
             <th>ราคาขาย</th><th>ต้นทุน/จาน</th><th>CM/จาน</th><th>%กำไร</th><th>CM รวม</th><th>คำแนะนำ</th>
           </tr>
@@ -437,6 +444,7 @@ footer.foot li{ margin-bottom:4px; }
       <li>ไฟล์ POS ที่ Export มาไม่มีต้นทุนสินค้า (เป็น 0 ทุกรายการ) หน้า Menu Engineering จึงดึงต้นทุนจากไฟล์ <code>menu_cost</code> แยกต่างหาก โดยใช้ช่อง “ต้นทุนที่ใช้” ซึ่งมาจากสูตร BOM หรือค่าที่กรอกเอง</li>
       <li>Menu Engineering คำนวณจาก<strong>ยอดขายจริงตามช่วงวันที่ที่เลือก</strong> เฉพาะเมนูที่มีต้นทุนแล้ว เกณฑ์แบ่งกลุ่มคำนวณแยกตาม “กลุ่มเปรียบเทียบ” เพื่อไม่ให้เครื่องดื่มไปเทียบกับอาหารจานหลัก</li>
       <li>แกนตั้งเลือกได้ระหว่าง <strong>%CM</strong> (เมนูนี้สร้างกำไรกี่ % ของกำไรรวมทั้งกลุ่ม) หรือ <strong>%MM</strong> (ขายได้กี่ % ของจำนวนจานรวม) ทั้งสองแบบรวมกันได้ 100% จึงใช้เกณฑ์เดียวกันคือ (100 ÷ จำนวนเมนู) × ตัวคูณ · แกนนอนเลือกได้ระหว่าง CM ต่อจาน (บาท) หรือ %กำไรต่อจาน โดยเกณฑ์เป็นค่าเฉลี่ยถ่วงน้ำหนักเสมอ</li>
+      <li>ตัวกรอง “หมวดสินค้า” ในหน้า Menu Engineering ใช้หมวดที่ตั้งไว้ใน POS หากเมนูหนึ่งถูกตั้งไว้หลายหมวด ระบบจะใช้หมวดที่ขายได้มากที่สุดในช่วงที่เลือก · เลือกได้ว่าจะคงเกณฑ์ของทั้งกลุ่มไว้ (เหมาะกับการดูว่าหมวดนี้ยืนตรงไหนเมื่อเทียบกับทั้งร้าน) หรือคำนวณเกณฑ์ใหม่เฉพาะหมวดนั้น (เหมาะกับการเทียบกันเองภายในหมวด)</li>
       <li>ปุ่ม <strong>⬇ CSV</strong> ใต้กราฟและเหนือตารางใหญ่ ดาวน์โหลดตารางนั้นตามช่วงวันที่และตัวกรองที่เลือกอยู่ ไฟล์เข้ารหัส UTF-8 พร้อม BOM เปิดใน Excel ภาษาไทยไม่เพี้ยน</li>
       <li>ไฟล์ export จาก POS มี 2 รูปแบบปนกัน บางช่วงคอลัมน์เลื่อนไป 1 ช่อง ทำให้ “จำนวนการขาย” เก็บยอดเงินแทนจำนวนจาน ระบบตรวจจับและแก้ค่าให้อัตโนมัติแล้ว แต่ควร export ใหม่ให้เป็นรูปแบบเดียวกัน</li>
       <li>ข้อมูลดึงสดจาก Google Sheet ทุกครั้งที่เปิดหน้านี้ / กดโหลดข้อมูลใหม่ (รีเฟรชอัตโนมัติทุก 10 นาที)</li>
