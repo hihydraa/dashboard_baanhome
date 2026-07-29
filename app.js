@@ -63,23 +63,40 @@ function parseNum(v) {
   return isNaN(n) ? 0 : n;
 }
 
-function parseHourFromTimeField(raw) {
-  if (raw === undefined || raw === null || raw === "") return null;
-  const s = String(raw).trim();
-  // "HH:MM" or "HH:MM:SS" or "HH:MM:SS AM/PM"
-  let m = s.match(/^(\d{1,2}):(\d{2})(:(\d{2}))?\s*(AM|PM|am|pm)?$/);
+/* ---- แปลงค่าจากคอลัมน์ "เวลา" ให้เป็นเลขชั่วโมง 0-23 (รองรับหลายรูปแบบ) ----
+   รองรับ: Date object (gviz ส่งมาแบบนี้เมื่อเซลล์เป็น date/datetime/time),
+   สตริง "Date(2026,6,15,10,23,45)", "10:23", "10:23:45", "10.23 น.",
+   "15/07/2026 10:23", timeofday array [h,m,s], และเลขทศนิยมเศษของวัน */
+function toHour(v) {
+  if (v === null || v === undefined || v === "") return null;
+  if (v instanceof Date) return v.getHours();
+  if (Array.isArray(v)) return typeof v[0] === "number" ? ((v[0] % 24) + 24) % 24 : null;
+  if (typeof v === "number") {
+    if (v >= 0 && v < 1) return Math.floor(v * 24);            // เศษของวัน
+    if (Number.isInteger(v) && v >= 0 && v <= 23) return v;    // เลขชั่วโมงตรงๆ
+    return Math.floor(v) % 24;
+  }
+  const s = String(v).trim();
+  // gviz datetime ที่มาเป็นสตริง
+  let m = s.match(/^Date\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*(\d{1,2})\s*,/);
+  if (m) return parseInt(m[1], 10) % 24;
+  // หา "HH:MM" (หรือ "HH.MM") ที่ไหนก็ได้ในสตริง — เผื่อมีวันที่นำหน้า หรือมี " น." ต่อท้าย
+  m = s.match(/(\d{1,2})\s*[:.]\s*(\d{2})(?:\s*[:.]\s*\d{2})?\s*([AaPp])?/);
   if (m) {
     let h = parseInt(m[1], 10);
-    const ampm = m[5] ? m[5].toUpperCase() : null;
-    if (ampm === "PM" && h < 12) h += 12;
-    if (ampm === "AM" && h === 12) h = 0;
+    const ap = m[3] ? m[3].toUpperCase() : null;
+    if (ap === "P" && h < 12) h += 12;
+    if (ap === "A" && h === 12) h = 0;
     return h % 24;
   }
-  // Decimal day-fraction (e.g. 0.4604166667) that Sheets sometimes exports for time-only cells
-  const f = parseFloat(s);
+  const f = parseFloat(s.replace(",", "."));
   if (!isNaN(f) && f >= 0 && f < 1) return Math.floor(f * 24);
+  if (!isNaN(f) && Number.isInteger(f) && f >= 0 && f <= 23) return f;
   return null;
 }
+
+// เก็บชื่อเดิมไว้เผื่อมีโค้ดส่วนอื่นเรียกใช้
+function parseHourFromTimeField(raw) { return toHour(raw); }
 
 /* ========================================================================
    Data fetching — Google Visualization API, loaded via a <script> tag
@@ -160,20 +177,63 @@ function gNum(row, idx) {
 function gDateISO(row, idx) {
   const v = gcell(row, idx);
   if (v === null || v === undefined) return "";
+  if (v instanceof Date) return toISODate(v);
   if (typeof v === "string") {
     const m = v.match(/^Date\((\d+),(\d+),(\d+)/);
     if (m) return `${m[1]}-${pad2(+m[2] + 1)}-${pad2(+m[3])}`; // gviz month is 0-based
+    const iso = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (iso) return `${iso[1]}-${pad2(+iso[2])}-${pad2(+iso[3])}`;
+    const dmy = v.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/); // 15/07/2026 (หรือ พ.ศ. 2569)
+    if (dmy) {
+      let y = +dmy[3];
+      if (y > 2400) y -= 543;
+      return `${y}-${pad2(+dmy[2])}-${pad2(+dmy[1])}`;
+    }
     return v.slice(0, 10);
   }
   return "";
 }
 function gHour(row, idx) {
-  const v = gcell(row, idx);
-  if (v === null || v === undefined) return null;
-  if (Array.isArray(v)) return v[0]; // gviz "timeofday" -> [h, m, s, ms]
-  if (typeof v === "number") return v >= 0 && v < 1 ? Math.floor(v * 24) : Math.floor(v) % 24;
-  if (typeof v === "string") return parseHourFromTimeField(v);
-  return null;
+  return toHour(gcell(row, idx));
+}
+
+/* ---- หาตำแหน่งคอลัมน์จาก "หัวคอลัมน์" (ถ้าหาไม่เจอค่อยใช้ตำแหน่งเดิม) ---- */
+function normLabel(s) { return String(s || "").replace(/\s+/g, "").toLowerCase(); }
+function findCol(table, tester, fallback) {
+  const cols = (table && table.cols) || [];
+  for (let i = 0; i < cols.length; i++) {
+    const lb = cols[i] && (cols[i].label || "");
+    if (lb && tester(normLabel(lb))) return i;
+  }
+  return fallback;
+}
+
+/* ---- ถ้าอ่านคอลัมน์เวลาตามตำแหน่งไม่ได้ ให้ไล่หาคอลัมน์ที่หน้าตาเป็น "เวลา" จริงๆ ---- */
+function detectHourColumn(table) {
+  const rows = (table && table.rows) || [];
+  const nCols = ((table && table.cols) || []).length;
+  let best = -1, bestDistinct = 0;
+  for (let c = 0; c < nCols; c++) {
+    const seen = new Set();
+    let ok = 0, tried = 0;
+    for (let i = 0; i < rows.length && tried < 300; i++) {
+      const v = gcell(rows[i], c);
+      if (v === null || v === undefined || v === "") continue;
+      tried++;
+      const looksLikeTime =
+        v instanceof Date ||
+        Array.isArray(v) ||
+        (typeof v === "string" && /\d{1,2}\s*[:.]\s*\d{2}/.test(v));
+      if (!looksLikeTime) continue;
+      const h = toHour(v);
+      if (h !== null) { ok++; seen.add(h); }
+    }
+    if (tried >= 5 && ok / tried > 0.8 && seen.size > bestDistinct) {
+      bestDistinct = seen.size;
+      best = c;
+    }
+  }
+  return bestDistinct >= 3 ? best : -1;
 }
 
 const diagnostics = [];
@@ -196,8 +256,8 @@ async function loadAllData() {
   ]);
 
   DATA.items = itemsTable ? cleanItems(itemsTable.rows || []) : [];
-  DATA.bills = billsTable ? cleanBills(billsTable.rows || []) : [];
-  DATA.hourly = hourlyTable ? cleanHourly(hourlyTable.rows || []) : [];
+  DATA.bills = billsTable ? cleanBills(billsTable) : [];
+  DATA.hourly = hourlyTable ? cleanHourly(hourlyTable) : [];
 
   // ---- schema sanity checks (จับกรณีดึงชีตผิดแท็บ/จำนวนคอลัมน์ไม่ตรง) ----
   if (itemsTable && (itemsTable.cols || []).length < 14) {
@@ -244,31 +304,82 @@ function cleanItems(rows) {
 
 // ชีตบิล (ยอดขายแยกตามบิล) — คอลัมน์ตามตำแหน่ง (0-based):
 // 0 วันที่ชำระเงิน, 1 เวลาที่ชำระเงิน, 19 รวมสุทธิ, 22 ประเภทการสั่ง, 24 ประเภทการชำระเงิน, 29 จำนวนลูกค้า
-function cleanBills(rows) {
-  return rows
+function cleanBills(table) {
+  const rows = (table && table.rows) || [];
+  const iDate  = findCol(table, (l) => l.includes("วันที่"), 0);
+  const iNet   = findCol(table, (l) => l.includes("รวมสุทธิ"), 19);
+  const iOrder = findCol(table, (l) => l.includes("ประเภทการสั่ง"), 22);
+  const iPay   = findCol(table, (l) => l.includes("ประเภทการชำระ"), 24);
+  const iCust  = findCol(table, (l) => l.includes("จำนวนลูกค้า"), 29);
+  let iTime    = findCol(table, (l) => l.includes("เวลา"), 1);
+
+  const build = (timeIdx) => rows
     .map((r) => ({
-      date: gDateISO(r, 0),
-      hour: gHour(r, 1),
-      net: gNum(r, 19),
-      customers: gNum(r, 29) || 1,
-      orderType: gStr(r, 22) || "ไม่ระบุ",
-      paymentType: gStr(r, 24) || "ไม่ระบุ",
+      date: gDateISO(r, iDate),
+      hour: gHour(r, timeIdx),
+      net: gNum(r, iNet),
+      customers: gNum(r, iCust) || 1,
+      orderType: gStr(r, iOrder) || "ไม่ระบุ",
+      paymentType: gStr(r, iPay) || "ไม่ระบุ",
     }))
     .filter((r) => r.date && r.paymentType !== "Void All");
+
+  let out = build(iTime);
+  const withHour = out.filter((r) => r.hour !== null).length;
+  if (out.length && withHour / out.length < 0.5) {
+    const alt = detectHourColumn(table);
+    if (alt >= 0 && alt !== iTime) {
+      iTime = alt;
+      out = build(iTime);
+    } else {
+      pushDiag(
+        `อ่านค่าเวลาในชีตบิล (${CONFIG.TABS.bills.name}) ไม่สำเร็จ — กราฟ "ยอดขายตามชั่วโมง" และ "ยอดขายตามมื้อ" จะว่าง ` +
+        `(ตรวจสอบว่ามีคอลัมน์ "เวลาที่ชำระเงิน" และค่าในคอลัมน์อยู่ในรูปแบบ 10:23 หรือ 10:23:45)`
+      );
+    }
+  }
+  return out;
 }
 
 // ชีตรายชั่วโมง: 10 คอลัมน์คงที่ + 24 คอลัมน์ชั่วโมง (0-23) + สาขา — อ้างอิงด้วยตำแหน่ง
-function cleanHourly(rows) {
-  return rows
+function cleanHourly(table) {
+  const rows = (table && table.rows) || [];
+  const cols = (table && table.cols) || [];
+
+  // หา 24 คอลัมน์ชั่วโมงจากหัวคอลัมน์ ("0","1",... หรือ "0:00","1:00",...)
+  let startIdx = -1;
+  for (let i = 0; i + 23 < cols.length; i++) {
+    let ok = true;
+    for (let h = 0; h < 24; h++) {
+      const lb = normLabel(cols[i + h] && cols[i + h].label);
+      const m = lb.match(/^(\d{1,2})(:00(:00)?)?$/);
+      if (!m || parseInt(m[1], 10) !== h) { ok = false; break; }
+    }
+    if (ok) { startIdx = i; break; }
+  }
+  if (startIdx < 0) startIdx = 10; // fallback: ตำแหน่งเดิมตามไฟล์ export
+
+  const iName = findCol(table, (l) => l.includes("ชื่อสินค้า"), 1);
+  const iCat  = findCol(table, (l) => l.includes("หมวด"), 3);
+
+  const out = rows
     .map((r) => {
-      const name = gStr(r, 1);
-      const category = gStr(r, 3);
+      const name = gStr(r, iName);
+      const category = gStr(r, iCat);
       if (!name) return null;
       const hours = [];
-      for (let h = 0; h < 24; h++) hours.push(gNum(r, 10 + h));
+      for (let h = 0; h < 24; h++) hours.push(gNum(r, startIdx + h));
       return { name, category, hours };
     })
     .filter(Boolean);
+
+  if (out.length && !out.some((r) => r.hours.some((v) => v > 0))) {
+    pushDiag(
+      `อ่านตัวเลขรายชั่วโมงจากชีต (${CONFIG.TABS.hourly.name}) ไม่ได้เลย — กราฟ "ช่วงเวลาขายดี เฉพาะร้านอาหาร" จะว่าง ` +
+      `(ตรวจสอบว่าหัวคอลัมน์ชั่วโมงยังเป็น 0-23 ตามไฟล์ export เดิม)`
+    );
+  }
+  return out;
 }
 
 /* ========================================================================
