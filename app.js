@@ -7,8 +7,12 @@
    ========================================================================= */
 
 const CONFIG = {
-  // ---- Google Sheet ที่เป็นฐานข้อมูล ----
+  // ---- Google Sheet ที่เป็นฐานข้อมูลยอดขาย (POS export) ----
   SHEET_ID: "1h-_POlaVm6SIykAp5yz1vZjsJp3WPtRn-PDvkzo4Nzg",
+
+  // ---- Google Sheet ที่เก็บต้นทุน/สูตรอาหาร (ไฟล์ menu_cost_baanhome) ----
+  // ถ้าย้ายไปรวมไฟล์เดียวกับ SHEET_ID ให้ใส่ค่าเดียวกันได้
+  MENU_SHEET_ID: "1cQdSlEcNjcM46s0VtDP9L5UfHn3vH_OgTn2fI5bcwyo",
 
   // ---- ชื่อแท็บชีต 3 แท็บ ต้องตรงกับที่ Export จาก POS เป๊ะๆ ----
   // ถ้าการดึงข้อมูลด้วยชื่อชีตใช้ไม่ได้ (เช่น เจอ banner แจ้งเตือนด้านบน)
@@ -19,6 +23,12 @@ const CONFIG = {
     bills:  { name: "ยอดขายแยกตามบิล",                   gid: null },
     hourly: { name: "ยอดขายตามสินค้ารายชั่วโมง",          gid: null },
   },
+
+  // ---- แท็บต้นทุนใน MENU_SHEET_ID ----
+  MENU_TAB: { name: "menu_cost", gid: null },
+
+  // ---- ตัวคูณเกณฑ์ MM% เริ่มต้น (0.7 = Kasavana-Smith, 1 = ค่าเฉลี่ยตรงๆ) ----
+  MM_FACTOR_DEFAULT: 0.7,
 
   // ---- หมวดสินค้าที่ถือว่าเป็น "รีสอร์ท/ห้องพัก" ให้ตัดออกจากยอดร้านอาหาร ----
   RESORT_CATEGORIES: ["รีสอร์ท", "ห้องพัก พูลวิลล่า"],
@@ -109,10 +119,10 @@ function parseHourFromTimeField(raw) { return toHour(raw); }
    Viewer".
    ======================================================================== */
 let __jsonpSeq = 0;
-function fetchGvizTable(tabConfig) {
+function fetchGvizTable(tabConfig, sheetId) {
   return new Promise((resolve, reject) => {
     const cbName = `__gvizCb_${++__jsonpSeq}_${Date.now()}`;
-    const base = `https://docs.google.com/spreadsheets/d/${CONFIG.SHEET_ID}/gviz/tq`;
+    const base = `https://docs.google.com/spreadsheets/d/${sheetId || CONFIG.SHEET_ID}/gviz/tq`;
     const locator = (tabConfig.gid !== null && tabConfig.gid !== undefined && tabConfig.gid !== "")
       ? `gid=${encodeURIComponent(tabConfig.gid)}`
       : `sheet=${encodeURIComponent(tabConfig.name)}`;
@@ -242,7 +252,7 @@ function pushDiag(msg) { diagnostics.push(msg); }
 /* ------------------------------------------------------------------------
    โหลดและทำความสะอาดข้อมูลทั้ง 3 ชีต
    ------------------------------------------------------------------------ */
-let DATA = { items: [], bills: [], hourly: [], minDate: null, maxDate: null };
+let DATA = { items: [], bills: [], hourly: [], menucost: [], minDate: null, maxDate: null };
 
 async function loadAllData() {
   diagnostics.length = 0;
@@ -255,9 +265,21 @@ async function loadAllData() {
     fetchGvizTable(CONFIG.TABS.hourly).catch((e) => { pushDiag(`โหลดชีตรายชั่วโมง (${CONFIG.TABS.hourly.name}) ไม่สำเร็จ: ${e.message}`); return null; }),
   ]);
 
+  // แท็บต้นทุน อยู่คนละไฟล์ — โหลดแยก และไม่ทำให้ทั้งหน้าพังถ้าดึงไม่ได้
+  const menuTable = await fetchGvizTable(CONFIG.MENU_TAB, CONFIG.MENU_SHEET_ID).catch((e) => {
+    pushDiag(`โหลดแท็บต้นทุน (${CONFIG.MENU_TAB.name}) ไม่สำเร็จ: ${e.message} — หน้า Menu Engineering จะยังไม่แสดงผล ` +
+      `(ตรวจสอบว่าไฟล์ต้นทุนแชร์เป็น "ทุกคนที่มีลิงก์ - ดูได้")`);
+    return null;
+  });
+
   DATA.items = itemsTable ? cleanItems(itemsTable.rows || []) : [];
   DATA.bills = billsTable ? cleanBills(billsTable) : [];
   DATA.hourly = hourlyTable ? cleanHourly(hourlyTable) : [];
+  DATA.menucost = menuTable ? cleanMenuCost(menuTable) : [];
+  if (menuTable && DATA.menucost.length === 0) {
+    pushDiag(`แท็บต้นทุน (${CONFIG.MENU_TAB.name}) โหลดได้แต่ไม่พบเมนูที่มีทั้งราคาขายและต้นทุน — ` +
+      `ตรวจสอบว่าคอลัมน์ K "ต้นทุนที่ใช้" มีค่าแล้ว`);
+  }
 
   // ---- schema sanity checks (จับกรณีดึงชีตผิดแท็บ/จำนวนคอลัมน์ไม่ตรง) ----
   if (itemsTable && (itemsTable.cols || []).length < 14) {
@@ -288,18 +310,62 @@ async function loadAllData() {
 // 0 วันที่, 1 รหัสสินค้า, 2 ชื่อสินค้า, 3 กลุ่ม, 4 หมวดสินค้า, 5 ต้นทุนเฉลี่ย, 6 ราคาขายเฉลี่ย,
 // 7 กำไรเฉลี่ย, 8 จำนวนการขาย, 9 ยอดก่อนลด, 10 ต้นทุน, 11 ส่วนลดสินค้า, 12 ราคาสุทธิ, 13 กำไร, 14 สาขา
 function cleanItems(rows) {
-  return rows
-    .map((r) => ({
-      date: gDateISO(r, 0),
-      name: gStr(r, 2),
-      category: gStr(r, 4),
-      qty: gNum(r, 8),
-      grossBeforeDiscount: gNum(r, 9),
-      discount: gNum(r, 11),
-      net: gNum(r, 12),
-      profit: gNum(r, 13),
-    }))
+  let shiftedCount = 0;
+  const out = rows
+    .map((r) => {
+      // ไฟล์ export จาก POS มี 2 รูปแบบปนกัน: บางช่วงคอลัมน์เลื่อนไป 1 ช่อง
+      // ทำให้ช่อง "จำนวนการขาย" เก็บยอดเงินแทนจำนวนจาน และจำนวนจริงไปอยู่ช่อง "กำไรเฉลี่ย"
+      // ตรวจจับจาก "ยอดก่อนลด" ที่เป็น 0 ทั้งที่มียอดขาย แล้วสลับค่ากลับให้ถูก
+      const grossCol = gNum(r, 9);
+      const qtyCol = gNum(r, 8);
+      const shifted = grossCol === 0 && qtyCol > 0;
+      if (shifted) shiftedCount++;
+      return {
+        date: gDateISO(r, 0),
+        name: gStr(r, 2),
+        category: gStr(r, 4),
+        qty: shifted ? gNum(r, 7) : qtyCol,
+        grossBeforeDiscount: shifted ? qtyCol : grossCol,
+        discount: shifted ? gNum(r, 10) : gNum(r, 11),
+        net: gNum(r, 12),
+        profit: gNum(r, 13),
+      };
+    })
     .filter((r) => r.date && r.name);
+  if (shiftedCount > 0) {
+    pushDiag(`ชีตสินค้า (${CONFIG.TABS.items.name}) มี ${fmtInt(shiftedCount)} แถวที่คอลัมน์เลื่อนไป 1 ช่อง — ` +
+      `ระบบแก้ค่า "จำนวนการขาย" ให้อัตโนมัติแล้ว แต่ควร export ใหม่ให้ทุกแถวเป็นรูปแบบเดียวกันเพื่อความถูกต้องระยะยาว`);
+  }
+  return out;
+}
+
+// แท็บ menu_cost (จากไฟล์ menu_cost_baanhome) — อ้างอิงด้วยตำแหน่งคอลัมน์:
+// 0 ชื่อสินค้า, 2 กลุ่มเปรียบเทียบ, 3 ราคาขายตั้ง, 10 ต้นทุนที่ใช้, 11 ที่มาต้นทุน
+function cleanMenuCost(table) {
+  const rows = (table && table.rows) || [];
+  const list = rows
+    .map((r) => ({
+      name: gStr(r, 0),
+      group: gStr(r, 2) || "ไม่ระบุ",
+      price: gNum(r, 3),
+      cost: gNum(r, 10),
+      source: gStr(r, 11),
+    }))
+    .filter((r) => r.name && r.price > 0 && r.cost > 0);
+
+  // ชื่อเมนูเดียวกันอาจมีหลายแถว (เมนูเดียวถูกตั้งไว้หลายหมวดใน POS)
+  // ต้องเหลือแถวเดียวต่อชื่อ ไม่งั้นจะนับยอดขายซ้ำในแผนภาพ
+  const byName = new Map();
+  let dup = 0;
+  list.forEach((r) => {
+    if (byName.has(r.name)) { dup++; return; }
+    byName.set(r.name, r);
+  });
+  if (dup > 0) {
+    pushDiag(`แท็บต้นทุน (${CONFIG.MENU_TAB.name}) มีชื่อเมนูซ้ำ ${fmtInt(dup)} แถว — ` +
+      `ระบบใช้แถวแรกของแต่ละชื่อ แนะนำให้ลบแถวซ้ำในชีตเพื่อไม่ให้สับสน`);
+  }
+  return [...byName.values()];
 }
 
 // ชีตบิล (ยอดขายแยกตามบิล) — คอลัมน์ตามตำแหน่ง (0-based):
@@ -528,7 +594,7 @@ function destroyChart(name) {
 
 // เผื่อ CDN ของ Chart.js โหลดไม่สำเร็จ: แสดงข้อความแทนกราฟ แต่ไม่ทำให้หน้าเว็บพัง
 // (ตัวเลข KPI และปุ่ม "แสดงตาราง" ใต้กราฟยังใช้งานได้ตามปกติ)
-function safeNewChart(canvasEl, config) {
+function safeNewChart(canvasEl, config, extraPlugins) {
   if (!CHART_LIB_OK) {
     const wrap = canvasEl && canvasEl.parentElement;
     if (wrap && !wrap.querySelector(".chart-unavailable-note")) {
@@ -539,6 +605,9 @@ function safeNewChart(canvasEl, config) {
       wrap.appendChild(note);
     }
     return { destroy() {}, update() {} };
+  }
+  if (extraPlugins && extraPlugins.length) {
+    config = Object.assign({}, config, { plugins: (config.plugins || []).concat(extraPlugins) });
   }
   return new Chart(canvasEl, config);
 }
@@ -992,6 +1061,242 @@ function renderTableView(containerId, headers, rows) {
     <tbody>${rows.map((row) => `<tr>${row.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
+
+/* ========================================================================
+   Menu Engineering
+   แกนตั้ง = MM% (สัดส่วนจำนวนจานที่ขายได้ในกลุ่มเดียวกัน)
+   แกนนอน = CM ต่อจาน (ราคาขาย - ต้นทุนวัตถุดิบ)
+   จัดกลุ่มตามหลัก Kasavana-Smith: Star / Horse / Puzzle / Dog
+   ======================================================================== */
+const ME_CLASSES = {
+  Star:   { th: "ดาวเด่น",  varName: "--series-4", advice: "Retain — คุมมาตรฐานรสชาติและปริมาณให้คงที่" },
+  Horse:  { th: "ม้าแก่",   varName: "--series-1", advice: "Re-price — ทบทวนราคาขาย หรือลดต้นทุนวัตถุดิบ" },
+  Puzzle: { th: "ปริศนา",   varName: "--series-3", advice: "Reposition — ดันยอดขาย ย้ายตำแหน่งในเล่มเมนู ให้พนักงานเชียร์" },
+  Dog:    { th: "สุนัข",    varName: "--series-6", advice: "Replace — พิจารณาตัดออกจากเมนู" },
+};
+const ME_ORDER = ["Star", "Puzzle", "Horse", "Dog"];
+
+let meGroup = null;          // กลุ่มเปรียบเทียบที่กำลังดูอยู่
+let meFactor = CONFIG.MM_FACTOR_DEFAULT;
+let meFilter = "ALL";        // ตัวกรองตารางด้านล่าง
+let meRows = [];
+
+function meAvailableGroups() {
+  const seen = new Set();
+  DATA.menucost.forEach((m) => seen.add(m.group));
+  const list = [...seen];
+  // เรียงให้ "อาหาร" มาก่อนเสมอ
+  list.sort((a, b) => (a === "อาหาร" ? -1 : b === "อาหาร" ? 1 : a.localeCompare(b, "th")));
+  return list;
+}
+
+function computeMenuEngineering(range, group, factor) {
+  // ยอดขายจริงในช่วงที่เลือก (เฉพาะฝั่งร้านอาหาร)
+  const sales = {};
+  DATA.items.forEach((r) => {
+    if (r.date < range.start || r.date > range.end) return;
+    if (!isRestaurant(r.category)) return;
+    const s = sales[r.name] || (sales[r.name] = { qty: 0, net: 0 });
+    s.qty += r.qty;
+    s.net += r.net;
+  });
+
+  const rows = [];
+  DATA.menucost.forEach((m) => {
+    if (m.group !== group) return;
+    const s = sales[m.name];
+    if (!s || s.qty <= 0) return;
+    rows.push({
+      name: m.name, group: m.group, source: m.source,
+      price: m.price, cost: m.cost, cm: m.price - m.cost,
+      qty: s.qty, net: s.net,
+    });
+  });
+
+  const totQty = rows.reduce((a, r) => a + r.qty, 0);
+  const totCM = rows.reduce((a, r) => a + r.cm * r.qty, 0);
+  const cmThr = totQty > 0 ? totCM / totQty : 0;          // CM เฉลี่ยถ่วงน้ำหนัก
+  const mmThr = rows.length > 0 ? factor / rows.length : 0;
+
+  rows.forEach((r) => {
+    r.mm = totQty > 0 ? r.qty / totQty : 0;
+    r.cmTotal = r.cm * r.qty;
+    const hiMM = r.mm >= mmThr;
+    const hiCM = r.cm >= cmThr;
+    r.cls = hiMM && hiCM ? "Star" : hiMM && !hiCM ? "Horse" : !hiMM && hiCM ? "Puzzle" : "Dog";
+  });
+  rows.sort((a, b) => b.cmTotal - a.cmTotal);
+
+  // ครอบคลุมแค่ไหน — เทียบกับเมนูทั้งหมดที่ขายจริงในช่วงนี้
+  let allQty = 0, allNet = 0, allMenus = 0;
+  Object.keys(sales).forEach((n) => { allMenus++; allQty += sales[n].qty; allNet += sales[n].net; });
+  const covered = rows.reduce((a, r) => a + r.net, 0);
+
+  return { rows, cmThr, mmThr, totQty, coverage: { menus: rows.length, allMenus, net: covered, allNet } };
+}
+
+// เส้นแบ่ง 4 ควอดรันต์ + ป้ายกำกับมุม
+const quadrantPlugin = {
+  id: "meQuadrants",
+  beforeDatasetsDraw(chart, args, opts) {
+    const { ctx, chartArea: a, scales } = chart;
+    if (!a || !opts || opts.xLine == null) return;
+    const x = scales.x.getPixelForValue(opts.xLine);
+    const y = scales.y.getPixelForValue(opts.yLine);
+    ctx.save();
+    ctx.strokeStyle = opts.lineColor || "#999";
+    ctx.setLineDash([5, 4]);
+    ctx.lineWidth = 1.5;
+    if (x >= a.left && x <= a.right) { ctx.beginPath(); ctx.moveTo(x, a.top); ctx.lineTo(x, a.bottom); ctx.stroke(); }
+    if (y >= a.top && y <= a.bottom) { ctx.beginPath(); ctx.moveTo(a.left, y); ctx.lineTo(a.right, y); ctx.stroke(); }
+    ctx.setLineDash([]);
+    ctx.font = "600 11px system-ui, -apple-system, 'Noto Sans Thai', sans-serif";
+    ctx.fillStyle = opts.labelColor || "#999";
+    const pad = 6;
+    ctx.textBaseline = "top";
+    ctx.textAlign = "left";   ctx.fillText("ม้าแก่ (Horse)",  a.left + pad,  a.top + pad);
+    ctx.textAlign = "right";  ctx.fillText("ดาวเด่น (Star)",  a.right - pad, a.top + pad);
+    ctx.textBaseline = "bottom";
+    ctx.textAlign = "left";   ctx.fillText("สุนัข (Dog)",     a.left + pad,  a.bottom - pad);
+    ctx.textAlign = "right";  ctx.fillText("ปริศนา (Puzzle)", a.right - pad, a.bottom - pad);
+    ctx.restore();
+  },
+};
+
+function renderMenuEngineering(range) {
+  const wrapEmpty = document.getElementById("meEmpty");
+  const body = document.getElementById("meBody");
+  if (!DATA.menucost.length) {
+    if (wrapEmpty) wrapEmpty.style.display = "block";
+    if (body) body.style.display = "none";
+    return;
+  }
+  if (wrapEmpty) wrapEmpty.style.display = "none";
+  if (body) body.style.display = "";
+
+  // เติมตัวเลือกกลุ่มครั้งแรก
+  const sel = document.getElementById("meGroupSel");
+  const groups = meAvailableGroups();
+  if (sel && sel.options.length !== groups.length) {
+    sel.innerHTML = groups.map((g) => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join("");
+  }
+  if (!meGroup || !groups.includes(meGroup)) meGroup = groups[0] || null;
+  if (sel) sel.value = meGroup;
+  const fsel = document.getElementById("meFactorSel");
+  if (fsel) fsel.value = String(meFactor);
+
+  const res = computeMenuEngineering(range, meGroup, meFactor);
+  meRows = res.rows;
+
+  // ---- การ์ดสรุป 4 กลุ่ม ----
+  const grid = document.getElementById("meKpi");
+  if (grid) {
+    grid.innerHTML = ME_ORDER.map((k) => {
+      const list = res.rows.filter((r) => r.cls === k);
+      const cm = list.reduce((a, r) => a + r.cmTotal, 0);
+      const c = ME_CLASSES[k];
+      return `<div class="kpi me-kpi" style="border-left:4px solid ${cssVar(c.varName)}">
+        <div class="label">${k} · ${c.th}</div>
+        <div class="value">${fmtInt(list.length)} <small>เมนู</small></div>
+        <div class="foot">CM รวม ${fmtBaht(cm)} บาท</div>
+      </div>`;
+    }).join("");
+  }
+
+  // ---- ข้อความครอบคลุม ----
+  const note = document.getElementById("meCoverage");
+  if (note) {
+    const cov = res.coverage;
+    const pct = cov.allNet > 0 ? (cov.net / cov.allNet) * 100 : 0;
+    note.textContent = `วิเคราะห์ได้ ${fmtInt(cov.menus)} เมนูที่มีต้นทุนแล้ว จากเมนูที่ขายจริงในช่วงนี้ทั้งหมด ${fmtInt(cov.allMenus)} เมนู ` +
+      `(คิดเป็น ${pct.toFixed(1)}% ของยอดขายฝั่งร้านอาหารในช่วงที่เลือก) · ` +
+      `เกณฑ์ MM% = ${(res.mmThr * 100).toFixed(2)}% · CM เฉลี่ยถ่วงน้ำหนัก = ${fmtBaht(res.cmThr)} บาท/จาน`;
+  }
+
+  // ---- Scatter ----
+  const datasets = ME_ORDER.map((k) => {
+    const c = ME_CLASSES[k];
+    return {
+      label: `${k} · ${c.th}`,
+      data: res.rows.filter((r) => r.cls === k).map((r) => ({ x: r.cm, y: r.mm * 100, r0: r })),
+      backgroundColor: cssVar(c.varName),
+      borderColor: cssVar(c.varName),
+      pointRadius: 5, pointHoverRadius: 8,
+    };
+  });
+
+  destroyChart("me");
+  charts.me = safeNewChart(document.getElementById("chartME"), {
+    type: "scatter",
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      layout: { padding: { top: 10, right: 10 } },
+      plugins: {
+        legend: { position: "bottom", labels: { color: baseTextColor(), boxWidth: 10, usePointStyle: true, pointStyle: "circle", font: { size: 11 } } },
+        datalabels: { display: false },
+        meQuadrants: { xLine: res.cmThr, yLine: res.mmThr * 100, lineColor: baseGridColor(), labelColor: baseMutedColor() },
+        tooltip: Object.assign(tooltipBase(), {
+          callbacks: {
+            title: (items) => items[0].raw.r0.name,
+            label: (item) => {
+              const r = item.raw.r0;
+              return [
+                `ขายได้ ${fmtInt(r.qty)} จาน (MM% ${(r.mm * 100).toFixed(2)}%)`,
+                `ราคาขาย ${fmtBaht(r.price)} · ต้นทุน ${fmtBaht(r.cost)} บาท`,
+                `CM ต่อจาน ${fmtBaht(r.cm)} บาท · CM รวม ${fmtBaht(r.cmTotal)} บาท`,
+                `กลุ่ม ${r.cls} · ${ME_CLASSES[r.cls].th}`,
+              ];
+            },
+          },
+        }),
+      },
+      scales: {
+        x: {
+          title: { display: true, text: "CM ต่อจาน (บาท) — กำไรเบื้องต้นก่อนหักค่าใช้จ่าย", color: baseMutedColor(), font: { size: 11 } },
+          grid: { color: baseGridColor() },
+          ticks: { color: baseMutedColor(), callback: (v) => fmtCompact(v) },
+          border: { display: false },
+        },
+        y: {
+          title: { display: true, text: "MM % — สัดส่วนจำนวนจานที่ขายได้", color: baseMutedColor(), font: { size: 11 } },
+          beginAtZero: true,
+          grid: { color: baseGridColor() },
+          ticks: { color: baseMutedColor(), callback: (v) => `${v}%` },
+          border: { display: false },
+        },
+      },
+    },
+  }, [quadrantPlugin]);
+
+  renderMETable();
+}
+
+function renderMETable() {
+  const tbody = document.querySelector("#meTable tbody");
+  if (!tbody) return;
+  const rows = meFilter === "ALL" ? meRows : meRows.filter((r) => r.cls === meFilter);
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:18px;">ไม่มีเมนูในกลุ่มนี้</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map((r, i) => {
+    const c = ME_CLASSES[r.cls];
+    return `<tr>
+      <td class="rank-badge">${i + 1}</td>
+      <td>${escapeHtml(r.name)}</td>
+      <td style="text-align:left;"><span class="me-badge" style="background:${cssVar(c.varName)}">${r.cls}</span></td>
+      <td>${fmtInt(r.qty)}</td>
+      <td>${(r.mm * 100).toFixed(2)}%</td>
+      <td>${fmtBaht(r.price)}</td>
+      <td>${fmtBaht(r.cost)}</td>
+      <td>${fmtBaht(r.cm)}</td>
+      <td><strong>${fmtBaht(r.cmTotal)}</strong></td>
+      <td style="text-align:left;font-size:12px;color:var(--text-secondary);">${escapeHtml(c.advice)}</td>
+    </tr>`;
+  }).join("");
+}
+
 /* ========================================================================
    Diagnostics banner
    ======================================================================== */
@@ -1025,6 +1330,7 @@ function renderAll() {
   renderHourRestaurant();
   renderWeekday(currentRange);
   renderPaymentAndOrderType(cur);
+  renderMenuEngineering(currentRange);
   renderItemsTable(cur);
 }
 
@@ -1051,6 +1357,10 @@ function applyPreset(preset) {
   if (start < min) start = min;
   setRange(start, end);
   renderAll();
+}
+
+function syncMEFilterChips() {
+  document.querySelectorAll(".chip[data-mefilter]").forEach((b) => b.classList.toggle("active", b.dataset.mefilter === meFilter));
 }
 
 function wireUI() {
@@ -1084,6 +1394,14 @@ function wireUI() {
       else itemsTableSort = { key, dir: -1 };
       if (lastItemsTableCur) renderItemsTable(lastItemsTableCur);
     });
+  });
+
+  const gsel = document.getElementById("meGroupSel");
+  if (gsel) gsel.addEventListener("change", () => { meGroup = gsel.value; meFilter = "ALL"; syncMEFilterChips(); renderMenuEngineering(currentRange); });
+  const fsel = document.getElementById("meFactorSel");
+  if (fsel) fsel.addEventListener("change", () => { meFactor = parseFloat(fsel.value) || 0.7; renderMenuEngineering(currentRange); });
+  document.querySelectorAll(".chip[data-mefilter]").forEach((btn) => {
+    btn.addEventListener("click", () => { meFilter = btn.dataset.mefilter; syncMEFilterChips(); renderMETable(); });
   });
 
   document.getElementById("refreshBtn").addEventListener("click", () => boot(true));
