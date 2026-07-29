@@ -668,7 +668,7 @@ function renderKPIs(cur, prev) {
     <div class="kpi muted">
       <div class="label">ยอดขายรีสอร์ท</div>
       <div class="value">${fmtBaht(cur.resortRevenue)} <small>บาท</small></div>
-      <div class="foot">แสดงไว้เพื่อเทียบขนาดเท่านั้น ไม่รวมในยอดร้านอาหารด้านบน</div>
+      <div class="foot">ไม่รวมในยอดร้านอาหารด้านบน</div>
     </div>
   `;
 }
