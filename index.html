@@ -162,6 +162,14 @@ header.top p.sub{ margin:0; color:var(--text-secondary); font-size:13px; }
 .canvas-wrap canvas{ width:100% !important; height:100% !important; display:block; }
 .static-note{ font-size:11px; color:var(--status-serious); margin-top:8px; }
 .table-toggle{ font-size:12px; color:var(--series-1); background:none; border:none; cursor:pointer; padding:4px 0; margin-top:6px; text-align:left; }
+.csv-btn{
+  font-size:12px; color:var(--text-secondary); background:none; border:none; cursor:pointer;
+  padding:4px 0; margin-top:6px; margin-left:16px; text-align:left;
+}
+.csv-btn:hover{ color:var(--series-4); }
+.csv-btn.done{ color:var(--series-4); }
+.csv-btn.fail{ color:var(--series-6); }
+.csv-btn.solo{ margin-left:0; margin-bottom:8px; }
 .table-view{ display:none; margin-top:8px; max-height:220px; overflow:auto; border-top:1px solid var(--gridline); }
 .table-view.show{ display:block; }
 .table-view table{ width:100%; border-collapse:collapse; font-size:12px; }
@@ -249,7 +257,7 @@ footer.foot li{ margin-bottom:4px; }
         <div><h3>แนวโน้มยอดขายรายวัน</h3><p class="desc">ยอดขายร้านอาหาร เทียบกับยอดรีสอร์ท (เพื่อบริบท) ตามช่วงวันที่เลือก</p></div>
       </div>
       <div class="canvas-wrap h280"><canvas id="chartDaily"></canvas></div>
-      <button class="table-toggle" data-target="tblDaily">แสดงตาราง ▾</button>
+      <button class="table-toggle" data-target="tblDaily">แสดงตาราง ▾</button><button class="csv-btn" data-csv="tblDaily" data-name="ยอดขายรายวัน">⬇ CSV</button>
       <div class="table-view" id="tblDaily"></div>
     </div>
 
@@ -262,7 +270,7 @@ footer.foot li{ margin-bottom:4px; }
         </div>
       </div>
       <div class="canvas-wrap h280"><canvas id="chartTopItems"></canvas></div>
-      <button class="table-toggle" data-target="tblTop">แสดงตาราง ▾</button>
+      <button class="table-toggle" data-target="tblTop">แสดงตาราง ▾</button><button class="csv-btn" data-csv="tblTop" data-name="เมนูขายดี">⬇ CSV</button>
       <div class="table-view" id="tblTop"></div>
     </div>
 
@@ -271,7 +279,7 @@ footer.foot li{ margin-bottom:4px; }
         <div><h3>ยอดขายตามหมวดสินค้า</h3><p class="desc">เฉพาะหมวดร้านอาหาร (ไม่รวมรีสอร์ท/ห้องพัก)</p></div>
       </div>
       <div class="canvas-wrap h280"><canvas id="chartCategory"></canvas></div>
-      <button class="table-toggle" data-target="tblCategory">แสดงตาราง ▾</button>
+      <button class="table-toggle" data-target="tblCategory">แสดงตาราง ▾</button><button class="csv-btn" data-csv="tblCategory" data-name="ยอดขายตามหมวด">⬇ CSV</button>
       <div class="table-view" id="tblCategory"></div>
     </div>
   </div>
@@ -283,7 +291,7 @@ footer.foot li{ margin-bottom:4px; }
         <div><h3>ยอดขายตามชั่วโมง (ทุกรายการ)</h3><p class="desc">รวมร้านอาหาร+รีสอร์ท ตามช่วงวันที่เลือก (จากรายงานบิล ซึ่งไม่แยกหมวดสินค้า)</p></div>
       </div>
       <div class="canvas-wrap h220"><canvas id="chartHourAll"></canvas></div>
-      <button class="table-toggle" data-target="tblHourAll">แสดงตาราง ▾</button>
+      <button class="table-toggle" data-target="tblHourAll">แสดงตาราง ▾</button><button class="csv-btn" data-csv="tblHourAll" data-name="ยอดขายตามชั่วโมง">⬇ CSV</button>
       <div class="table-view" id="tblHourAll"></div>
     </div>
 
@@ -292,7 +300,7 @@ footer.foot li{ margin-bottom:4px; }
         <div><h3>ยอดขายตามมื้อ (ทุกรายการ)</h3><p class="desc">แบ่งช่วงเวลาเป็นมื้อ ตามช่วงวันที่เลือก</p></div>
       </div>
       <div class="canvas-wrap h220"><canvas id="chartMeal"></canvas></div>
-      <button class="table-toggle" data-target="tblMeal">แสดงตาราง ▾</button>
+      <button class="table-toggle" data-target="tblMeal">แสดงตาราง ▾</button><button class="csv-btn" data-csv="tblMeal" data-name="ยอดขายตามมื้อ">⬇ CSV</button>
       <div class="table-view" id="tblMeal"></div>
     </div>
 
@@ -302,7 +310,7 @@ footer.foot li{ margin-bottom:4px; }
       </div>
       <div class="canvas-wrap h220"><canvas id="chartHourRestaurant"></canvas></div>
       <p class="static-note">⚠ ข้อมูลนี้มาจากรายงาน "ยอดขายตามสินค้ารายชั่วโมง" ซึ่งไม่มีคอลัมน์วันที่ จึงเป็นยอดรวมทั้งช่วงข้อมูลที่มีในชีต ไม่ผูกกับตัวกรองวันที่ด้านบน</p>
-      <button class="table-toggle" data-target="tblHourRest">แสดงตาราง ▾</button>
+      <button class="table-toggle" data-target="tblHourRest">แสดงตาราง ▾</button><button class="csv-btn" data-csv="tblHourRest" data-name="ช่วงเวลาขายดีร้านอาหาร">⬇ CSV</button>
       <div class="table-view" id="tblHourRest"></div>
     </div>
 
@@ -311,7 +319,7 @@ footer.foot li{ margin-bottom:4px; }
         <div><h3>ยอดขายตามวันในสัปดาห์</h3><p class="desc">เฉพาะร้านอาหาร ตามช่วงวันที่เลือก</p></div>
       </div>
       <div class="canvas-wrap h220"><canvas id="chartWeekday"></canvas></div>
-      <button class="table-toggle" data-target="tblWeekday">แสดงตาราง ▾</button>
+      <button class="table-toggle" data-target="tblWeekday">แสดงตาราง ▾</button><button class="csv-btn" data-csv="tblWeekday" data-name="ยอดขายตามวันในสัปดาห์">⬇ CSV</button>
       <div class="table-view" id="tblWeekday"></div>
     </div>
   </div>
@@ -344,11 +352,21 @@ footer.foot li{ margin-bottom:4px; }
     <div class="me-controls">
       <label for="meGroupSel">กลุ่มเปรียบเทียบ</label>
       <select id="meGroupSel"></select>
-      <label for="meFactorSel">เกณฑ์ MM%</label>
+      <label for="meYSel">แกนตั้ง</label>
+      <select id="meYSel">
+        <option value="cmshare">%CM — สัดส่วนกำไรรวม</option>
+        <option value="mm">%MM — สัดส่วนจำนวนจาน</option>
+      </select>
+      <label for="meXSel">แกนนอน</label>
+      <select id="meXSel">
+        <option value="cm">CM ต่อจาน (บาท)</option>
+        <option value="margin">%กำไรต่อจาน</option>
+      </select>
+      <label for="meFactorSel">ตัวคูณเกณฑ์แกนตั้ง</label>
       <select id="meFactorSel">
-        <option value="0.7">70% ของค่าเฉลี่ย (Kasavana-Smith)</option>
-        <option value="1">ค่าเฉลี่ยตรงๆ</option>
-        <option value="0.5">50% ของค่าเฉลี่ย (เข้มน้อยกว่า)</option>
+        <option value="0.7">0.7 — 70% ของค่าเฉลี่ย (Kasavana-Smith)</option>
+        <option value="1">1.0 — ค่าเฉลี่ยตรงๆ</option>
+        <option value="0.5">0.5 — เกณฑ์หลวมกว่า</option>
       </select>
     </div>
 
@@ -381,12 +399,14 @@ footer.foot li{ margin-bottom:4px; }
       <button class="chip" data-mefilter="Dog">สุนัข</button>
     </div>
 
+    <button class="csv-btn solo" data-csv="meTable" data-name="Menu Engineering">⬇ ดาวน์โหลดตารางนี้เป็น CSV</button>
     <div class="datatable-wrap">
       <table class="big" id="meTable">
         <thead>
           <tr>
-            <th>#</th><th>เมนู</th><th>กลุ่ม</th><th>จำนวนขาย</th><th>MM %</th>
-            <th>ราคาขาย</th><th>ต้นทุน/จาน</th><th>CM/จาน</th><th>CM รวม</th><th>คำแนะนำ</th>
+            <th>#</th><th>เมนู</th><th>กลุ่ม</th><th>จำนวนขาย</th>
+            <th>%CM</th><th>%MM</th>
+            <th>ราคาขาย</th><th>ต้นทุน/จาน</th><th>CM/จาน</th><th>%กำไร</th><th>CM รวม</th><th>คำแนะนำ</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -395,6 +415,7 @@ footer.foot li{ margin-bottom:4px; }
   </div>
 
   <div class="section-title">ตารางเมนูขายดี (รายละเอียด)</div>
+  <button class="csv-btn solo" data-csv="itemsTable" data-name="เมนูขายดี รายละเอียด">⬇ ดาวน์โหลดตารางนี้เป็น CSV</button>
   <div class="datatable-wrap">
     <table class="big" id="itemsTable">
       <thead>
@@ -414,7 +435,9 @@ footer.foot li{ margin-bottom:4px; }
       <li>“จำนวนบิล” และ “บาทต่อบิล” คำนวณจากรายงานยอดขายแยกตามบิลทั้งหมด (รวมรีสอร์ท) เนื่องจากรายงานนี้ไม่มีข้อมูลรายเมนูต่อบิลให้แยกได้ ไม่นับบิลที่ถูก Void</li>
       <li>กราฟ “ช่วงเวลาขายดี เฉพาะร้านอาหาร” มาจากรายงานที่ไม่มีคอลัมน์วันที่ จึงแสดงยอดรวมทั้งช่วงข้อมูล ไม่ตอบสนองตัวกรองวันที่</li>
       <li>ไฟล์ POS ที่ Export มาไม่มีต้นทุนสินค้า (เป็น 0 ทุกรายการ) หน้า Menu Engineering จึงดึงต้นทุนจากไฟล์ <code>menu_cost</code> แยกต่างหาก โดยใช้ช่อง “ต้นทุนที่ใช้” ซึ่งมาจากสูตร BOM หรือค่าที่กรอกเอง</li>
-      <li>Menu Engineering คำนวณ MM% และ CM จาก<strong>ยอดขายจริงตามช่วงวันที่ที่เลือก</strong> เฉพาะเมนูที่มีต้นทุนแล้ว เกณฑ์แบ่งกลุ่มคำนวณแยกตาม “กลุ่มเปรียบเทียบ” เพื่อไม่ให้เครื่องดื่มไปเทียบกับอาหารจานหลัก</li>
+      <li>Menu Engineering คำนวณจาก<strong>ยอดขายจริงตามช่วงวันที่ที่เลือก</strong> เฉพาะเมนูที่มีต้นทุนแล้ว เกณฑ์แบ่งกลุ่มคำนวณแยกตาม “กลุ่มเปรียบเทียบ” เพื่อไม่ให้เครื่องดื่มไปเทียบกับอาหารจานหลัก</li>
+      <li>แกนตั้งเลือกได้ระหว่าง <strong>%CM</strong> (เมนูนี้สร้างกำไรกี่ % ของกำไรรวมทั้งกลุ่ม) หรือ <strong>%MM</strong> (ขายได้กี่ % ของจำนวนจานรวม) ทั้งสองแบบรวมกันได้ 100% จึงใช้เกณฑ์เดียวกันคือ (100 ÷ จำนวนเมนู) × ตัวคูณ · แกนนอนเลือกได้ระหว่าง CM ต่อจาน (บาท) หรือ %กำไรต่อจาน โดยเกณฑ์เป็นค่าเฉลี่ยถ่วงน้ำหนักเสมอ</li>
+      <li>ปุ่ม <strong>⬇ CSV</strong> ใต้กราฟและเหนือตารางใหญ่ ดาวน์โหลดตารางนั้นตามช่วงวันที่และตัวกรองที่เลือกอยู่ ไฟล์เข้ารหัส UTF-8 พร้อม BOM เปิดใน Excel ภาษาไทยไม่เพี้ยน</li>
       <li>ไฟล์ export จาก POS มี 2 รูปแบบปนกัน บางช่วงคอลัมน์เลื่อนไป 1 ช่อง ทำให้ “จำนวนการขาย” เก็บยอดเงินแทนจำนวนจาน ระบบตรวจจับและแก้ค่าให้อัตโนมัติแล้ว แต่ควร export ใหม่ให้เป็นรูปแบบเดียวกัน</li>
       <li>ข้อมูลดึงสดจาก Google Sheet ทุกครั้งที่เปิดหน้านี้ / กดโหลดข้อมูลใหม่ (รีเฟรชอัตโนมัติทุก 10 นาที)</li>
     </ul>
