@@ -207,6 +207,7 @@ table.big tbody tr:hover{ background:var(--page-plane); }
   color:var(--text-secondary); font-size:13px; background:var(--surface-1); line-height:1.7;
 }
 .me-legend{ font-size:12px; color:var(--text-muted); margin-top:10px; line-height:1.7; }
+tr.total-row td{ border-top:2px solid var(--baseline); background:var(--surface-2); }
 
 footer.foot{ margin-top:36px; font-size:12px; color:var(--text-muted); border-top:1px solid var(--gridline); padding-top:16px; }
 footer.foot ul{ margin:6px 0 0; padding-left:18px; }
@@ -222,7 +223,7 @@ footer.foot li{ margin-bottom:4px; }
   <header class="top">
     <div>
       <h1>Dashboard ยอดขายร้านอาหาร — บ้านโฮม</h1>
-      <p class="sub">ข้อมูลสดจาก Google Sheet (POS export) · เฉพาะยอดขายร้านอาหาร ตัดยอดรีสอร์ท/ห้องพักออกแล้ว</p>
+      <p class="sub">ข้อมูลสดจาก Google Sheet (POS export) · แยกยอดร้านอาหารกับที่พักในระดับรายการสินค้าจากชีต detail_perbill</p>
     </div>
     <div class="sync-box">
       <div><span class="sync-dot loading" id="syncDot"></span><span id="syncText">กำลังโหลดข้อมูล…</span></div>
@@ -252,7 +253,40 @@ footer.foot li{ margin-bottom:4px; }
   <div class="kpi-grid" id="kpiGrid"></div>
 
   <div class="section-title">ยอดขายและเมนู</div>
-  <div class="chart-grid">
+    <div class="section-title">สรุปตามประเภทบิล</div>
+  <p class="me-coverage" style="margin:-4px 0 12px;">
+    จัดประเภทจากสิ่งที่อยู่ในบิลนั้นจริง — บิลที่มีทั้งอาหารและที่พักจะถูกนับเป็น “บิลอื่นๆ” ไม่ถูกนับซ้ำในสองหมวด
+    ส่วนยอดขายในการ์ดด้านบนแยกในระดับรายการสินค้า จึงไม่ปนกันแม้อยู่ในบิลเดียวกัน
+  </p>
+  <div class="kpi-grid" id="billTypeKpi"></div>
+
+  <div class="chart-grid" style="margin-top:14px;">
+    <div class="card">
+      <div class="card-head">
+        <div><h3>สัดส่วนยอดขายตามประเภทบิล</h3><p class="desc">ยอดรวมของบิลแต่ละประเภท ตามช่วงวันที่เลือก</p></div>
+      </div>
+      <div class="canvas-wrap"><canvas id="chartBillType"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <div><h3>ตารางสรุปประเภทบิล</h3><p class="desc">จำนวนบิล บาท/บิล และยอดแยกอาหาร/ที่พักในแต่ละประเภท</p></div>
+      </div>
+      <div class="datatable-wrap">
+        <table class="big" id="billTypeTable">
+          <thead>
+            <tr>
+              <th>ประเภทบิล</th><th>เกณฑ์</th><th>จำนวนบิล</th><th>% บิล</th>
+              <th>ยอดขาย</th><th>% ยอดขาย</th><th>บาท/บิล</th><th>ยอดอาหารในบิล</th><th>ยอดที่พักในบิล</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <button class="csv-btn" data-csv="billTypeTable" data-name="สรุปประเภทบิล">⬇ CSV</button>
+    </div>
+  </div>
+
+<div class="chart-grid">
     <div class="card full">
       <div class="card-head">
         <div><h3>แนวโน้มยอดขายรายวัน</h3><p class="desc">ยอดขายร้านอาหาร เทียบกับยอดรีสอร์ท ตามช่วงวันที่เลือก</p></div>
@@ -289,7 +323,7 @@ footer.foot li{ margin-bottom:4px; }
   <div class="chart-grid">
     <div class="card">
       <div class="card-head">
-        <div><h3>ยอดขายตามชั่วโมง (ทุกรายการ)</h3><p class="desc">รวมร้านอาหาร+รีสอร์ท ตามช่วงวันที่เลือก (จากรายงานบิล ซึ่งไม่แยกหมวดสินค้า)</p></div>
+        <div><h3>ยอดขายตามชั่วโมง</h3><p class="desc">แยกร้านอาหารกับที่พักในแต่ละชั่วโมง ตามช่วงวันที่เลือก</p></div>
       </div>
       <div class="canvas-wrap h220"><canvas id="chartHourAll"></canvas></div>
       <button class="table-toggle" data-target="tblHourAll">แสดงตาราง ▾</button><button class="csv-btn" data-csv="tblHourAll" data-name="ยอดขายตามชั่วโมง">⬇ CSV</button>
@@ -298,7 +332,7 @@ footer.foot li{ margin-bottom:4px; }
 
     <div class="card">
       <div class="card-head">
-        <div><h3>ยอดขายตามมื้อ (ทุกรายการ)</h3><p class="desc">แบ่งช่วงเวลาเป็นมื้อ ตามช่วงวันที่เลือก</p></div>
+        <div><h3>ยอดขายตามมื้อ (เฉพาะร้านอาหาร)</h3><p class="desc">แบ่งช่วงเวลาเป็นมื้อ นับเฉพาะรายการอาหาร ตามช่วงวันที่เลือก</p></div>
       </div>
       <div class="canvas-wrap h220"><canvas id="chartMeal"></canvas></div>
       <button class="table-toggle" data-target="tblMeal">แสดงตาราง ▾</button><button class="csv-btn" data-csv="tblMeal" data-name="ยอดขายตามมื้อ">⬇ CSV</button>
@@ -307,9 +341,9 @@ footer.foot li{ margin-bottom:4px; }
 
     <div class="card">
       <div class="card-head">
-        <div><h3>ช่วงเวลาขายดี เฉพาะร้านอาหาร</h3><p class="desc">จำนวนรายการที่ขายต่อชั่วโมง (เฉพาะหมวดร้านอาหาร)</p></div>
+        <div><h3>จำนวนบิลตามชั่วโมง แยกประเภทบิล</h3><p class="desc">เห็นได้ว่าช่วงไหนเป็นลูกค้าอาหาร ช่วงไหนเป็นเช็คอินที่พัก ตามช่วงวันที่เลือก</p></div>
       </div>
-      <div class="canvas-wrap h220"><canvas id="chartHourRestaurant"></canvas></div>
+      <div class="canvas-wrap h220"><canvas id="chartBillTypeHour"></canvas></div>
       <p class="static-note">⚠ ข้อมูลนี้มาจากรายงาน "ยอดขายตามสินค้ารายชั่วโมง" ซึ่งไม่มีคอลัมน์วันที่ จึงเป็นยอดรวมทั้งช่วงข้อมูลที่มีในชีต ไม่ผูกกับตัวกรองวันที่ด้านบน</p>
       <button class="table-toggle" data-target="tblHourRest">แสดงตาราง ▾</button><button class="csv-btn" data-csv="tblHourRest" data-name="ช่วงเวลาขายดีร้านอาหาร">⬇ CSV</button>
       <div class="table-view" id="tblHourRest"></div>
@@ -438,15 +472,15 @@ footer.foot li{ margin-bottom:4px; }
   <footer class="foot">
     <div><strong>หมายเหตุวิธีคำนวณ</strong></div>
     <ul>
-      <li>ตัดยอดรีสอร์ทออกโดยกรองหมวดสินค้า “รีสอร์ท” และ “ห้องพัก พูลวิลล่า” ออกจากทุกยอดที่ระบุว่า “เฉพาะร้านอาหาร”</li>
-      <li>“จำนวนบิล” และ “บาทต่อบิล” คำนวณจากรายงานยอดขายแยกตามบิลทั้งหมด (รวมรีสอร์ท) เนื่องจากรายงานนี้ไม่มีข้อมูลรายเมนูต่อบิลให้แยกได้ ไม่นับบิลที่ถูก Void</li>
+      <li>แหล่งข้อมูลหลักคือชีต <code>detail_perbill</code> ซึ่งเป็นรายละเอียดระดับรายการสินค้าในแต่ละบิล ทำให้แยกยอดร้านอาหารกับที่พักได้แม่นยำ แม้จะอยู่ในบิลเดียวกัน · หมวดที่ถือเป็นที่พักคือ “รีสอร์ท” และ “ห้องพัก พูลวิลล่า” (ปรับได้ที่ <code>CONFIG.LODGING_CATEGORIES</code>)</li>
+      <li>“จำนวนบิล” และ “บาท/บิล” นับจากหมายเลขใบเสร็จในชีต <code>detail_perbill</code> ตัดรายการที่ถูกยกเลิก (Void All) ออกแล้ว · “ลูกค้าเฉลี่ยต่อบิล” ยังต้องอาศัยชีต <code>ยอดขายแยกตามบิล</code> เพราะชีตรายละเอียดไม่มีคอลัมน์จำนวนลูกค้า หากไม่มีชีตนี้จะแสดงเป็นขีด</li>
       <li>กราฟ “ช่วงเวลาขายดี เฉพาะร้านอาหาร” มาจากรายงานที่ไม่มีคอลัมน์วันที่ จึงแสดงยอดรวมทั้งช่วงข้อมูล ไม่ตอบสนองตัวกรองวันที่</li>
       <li>ไฟล์ POS ที่ Export มาไม่มีต้นทุนสินค้า (เป็น 0 ทุกรายการ) หน้า Menu Engineering จึงดึงต้นทุนจากไฟล์ <code>menu_cost</code> แยกต่างหาก โดยใช้ช่อง “ต้นทุนที่ใช้” ซึ่งมาจากสูตร BOM หรือค่าที่กรอกเอง</li>
       <li>Menu Engineering คำนวณจาก<strong>ยอดขายจริงตามช่วงวันที่ที่เลือก</strong> เฉพาะเมนูที่มีต้นทุนแล้ว เกณฑ์แบ่งกลุ่มคำนวณแยกตาม “กลุ่มเปรียบเทียบ” เพื่อไม่ให้เครื่องดื่มไปเทียบกับอาหารจานหลัก</li>
       <li>แกนตั้งเลือกได้ระหว่าง <strong>%CM</strong> (เมนูนี้สร้างกำไรกี่ % ของกำไรรวมทั้งกลุ่ม) หรือ <strong>%MM</strong> (ขายได้กี่ % ของจำนวนจานรวม) ทั้งสองแบบรวมกันได้ 100% จึงใช้เกณฑ์เดียวกันคือ (100 ÷ จำนวนเมนู) × ตัวคูณ · แกนนอนเลือกได้ระหว่าง CM ต่อจาน (บาท) หรือ %กำไรต่อจาน โดยเกณฑ์เป็นค่าเฉลี่ยถ่วงน้ำหนักเสมอ</li>
       <li>ตัวกรอง “หมวดสินค้า” ในหน้า Menu Engineering ใช้หมวดที่ตั้งไว้ใน POS หากเมนูหนึ่งถูกตั้งไว้หลายหมวด ระบบจะใช้หมวดที่ขายได้มากที่สุดในช่วงที่เลือก · เลือกได้ว่าจะคงเกณฑ์ของทั้งกลุ่มไว้ (เหมาะกับการดูว่าหมวดนี้ยืนตรงไหนเมื่อเทียบกับทั้งร้าน) หรือคำนวณเกณฑ์ใหม่เฉพาะหมวดนั้น (เหมาะกับการเทียบกันเองภายในหมวด)</li>
       <li>ปุ่ม <strong>⬇ CSV</strong> ใต้กราฟและเหนือตารางใหญ่ ดาวน์โหลดตารางนั้นตามช่วงวันที่และตัวกรองที่เลือกอยู่ ไฟล์เข้ารหัส UTF-8 พร้อม BOM เปิดใน Excel ภาษาไทยไม่เพี้ยน</li>
-      <li>ไฟล์ export จาก POS มี 2 รูปแบบปนกัน บางช่วงคอลัมน์เลื่อนไป 1 ช่อง ทำให้ “จำนวนการขาย” เก็บยอดเงินแทนจำนวนจาน ระบบตรวจจับและแก้ค่าให้อัตโนมัติแล้ว แต่ควร export ใหม่ให้เป็นรูปแบบเดียวกัน</li>
+      <li>การจัดประเภทบิล: มีทั้งอาหารและที่พัก → บิลอื่นๆ · มีเฉพาะอาหาร → บิลอาหาร · มีเฉพาะที่พัก → บิลที่พัก โดยหนึ่งบิลถูกนับเพียงประเภทเดียวเท่านั้น</li>
       <li>ข้อมูลดึงสดจาก Google Sheet ทุกครั้งที่เปิดหน้านี้ / กดโหลดข้อมูลใหม่ (รีเฟรชอัตโนมัติทุก 10 นาที)</li>
     </ul>
     <div id="lastSyncFoot" style="margin-top:8px;"></div>
