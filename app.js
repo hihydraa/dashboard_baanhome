@@ -19,12 +19,12 @@ const CONFIG = {
   // ให้เปิดชีตแต่ละแท็บใน Google Sheets แล้วคัดลอกเลข gid จาก URL
   // (ส่วนที่อยู่หลัง #gid=) มาใส่ในช่อง gid ด้านล่างแทน
   TABS: {
-    items:  { name: "salebyproduct",                    gid: null },
-    bills:  { name: "ยอดขายแยกตามบิล",                   gid: null },
-    hourly: { name: "ยอดขายตามสินค้ารายชั่วโมง",          gid: null },
+    // แหล่งข้อมูลหลัก — รายละเอียดรายบิล (1 แถว = 1 รายการสินค้าในบิล)
+    detail: { name: "detail_perbill", gid: null },
+    // ใช้เฉพาะ "จำนวนลูกค้า" ซึ่งไม่มีในชีต detail_perbill — ถ้าไม่มีก็ยังใช้งานได้
+    bills: { name: "ยอดขายแยกตามบิล", gid: null },
   },
 
-  // ---- แท็บต้นทุนใน MENU_SHEET_ID ----
   MENU_TAB: { name: "menu_cost", gid: null },
 
   // ---- ตัวคูณเกณฑ์แกนตั้งเริ่มต้น (0.7 = Kasavana-Smith, 1 = ค่าเฉลี่ยตรงๆ) ----
@@ -34,8 +34,17 @@ const CONFIG = {
   ME_Y_DEFAULT: "cmshare",   // "cmshare" = %CM สัดส่วนกำไรรวม | "mm" = %MM สัดส่วนจำนวนจาน
   ME_X_DEFAULT: "cm",        // "cm" = CM ต่อจาน (บาท) | "margin" = %กำไรต่อจาน
 
-  // ---- หมวดสินค้าที่ถือว่าเป็น "รีสอร์ท/ห้องพัก" ให้ตัดออกจากยอดร้านอาหาร ----
-  RESORT_CATEGORIES: ["รีสอร์ท", "ห้องพัก พูลวิลล่า"],
+  // ---- หมวดสินค้าที่ถือว่าเป็น "ที่พัก" ----
+  // ใช้ทั้งกับการแยกยอดขาย และการจัดประเภทบิล
+  // ถ้าต้องการนับ "ค่าห้อง VIP" เป็นที่พักด้วย ให้เพิ่ม "ค่าห้อง VIP" ลงในลิสต์นี้
+  LODGING_CATEGORIES: ["รีสอร์ท", "ห้องพัก พูลวิลล่า"],
+
+  // ---- ประเภทบิล (จัดตามว่าในบิลนั้นมีอะไรบ้าง) ----
+  BILL_TYPES: [
+    { key: "food",    label: "บิลอาหาร",               desc: "มีเฉพาะรายการอาหาร",              varName: "--series-1" },
+    { key: "lodging", label: "บิลที่พัก",               desc: "มีเฉพาะที่พัก รีสอร์ท/พูลวิลล่า",  varName: "--series-3" },
+    { key: "mixed",   label: "บิลอื่นๆ (อาหาร+ที่พัก)", desc: "มีทั้งอาหารและที่พักในบิลเดียว",    varName: "--series-4" },
+  ],
 
   // ---- ช่วงเวลาแบ่งมื้ออาหาร (ปรับได้ตามเวลาเปิด-ปิดร้านจริง) ----
   MEAL_PERIODS: [
@@ -256,17 +265,18 @@ function pushDiag(msg) { diagnostics.push(msg); }
 /* ------------------------------------------------------------------------
    โหลดและทำความสะอาดข้อมูลทั้ง 3 ชีต
    ------------------------------------------------------------------------ */
-let DATA = { items: [], bills: [], hourly: [], menucost: [], minDate: null, maxDate: null };
+let DATA = { items: [], bills: [], billsMeta: [], menucost: [], minDate: null, maxDate: null };
 
 async function loadAllData() {
   diagnostics.length = 0;
   if (CHART_SETUP_ERROR) pushDiag(CHART_SETUP_ERROR);
   setSyncState("loading", "กำลังโหลดข้อมูล…");
 
-  const [itemsTable, billsTable, hourlyTable] = await Promise.all([
-    fetchGvizTable(CONFIG.TABS.items).catch((e) => { pushDiag(`โหลดชีตสินค้า (${CONFIG.TABS.items.name}) ไม่สำเร็จ: ${e.message}`); return null; }),
-    fetchGvizTable(CONFIG.TABS.bills).catch((e) => { pushDiag(`โหลดชีตบิล (${CONFIG.TABS.bills.name}) ไม่สำเร็จ: ${e.message}`); return null; }),
-    fetchGvizTable(CONFIG.TABS.hourly).catch((e) => { pushDiag(`โหลดชีตรายชั่วโมง (${CONFIG.TABS.hourly.name}) ไม่สำเร็จ: ${e.message}`); return null; }),
+  const [detailTable, billsTable] = await Promise.all([
+    fetchGvizTable(CONFIG.TABS.detail).catch((e) => {
+      pushDiag(`โหลดชีตรายละเอียดรายบิล (${CONFIG.TABS.detail.name}) ไม่สำเร็จ: ${e.message}`); return null;
+    }),
+    fetchGvizTable(CONFIG.TABS.bills).catch(() => null),   // ไม่บังคับ ใช้เฉพาะจำนวนลูกค้า
   ]);
 
   // แท็บต้นทุน อยู่คนละไฟล์ — โหลดแยก และไม่ทำให้ทั้งหน้าพังถ้าดึงไม่ได้
@@ -276,33 +286,28 @@ async function loadAllData() {
     return null;
   });
 
-  DATA.items = itemsTable ? cleanItems(itemsTable.rows || []) : [];
-  DATA.bills = billsTable ? cleanBills(billsTable) : [];
-  DATA.hourly = hourlyTable ? cleanHourly(hourlyTable) : [];
+  DATA.items = detailTable ? cleanDetail(detailTable) : [];
+  DATA.bills = buildBills(DATA.items);
+  DATA.billsMeta = billsTable ? cleanBills(billsTable) : [];
   DATA.menucost = menuTable ? cleanMenuCost(menuTable) : [];
   if (menuTable && DATA.menucost.length === 0) {
     pushDiag(`แท็บต้นทุน (${CONFIG.MENU_TAB.name}) โหลดได้แต่ไม่พบเมนูที่มีทั้งราคาขายและต้นทุน — ` +
       `ตรวจสอบว่าคอลัมน์ K "ต้นทุนที่ใช้" มีค่าแล้ว`);
   }
 
-  // ---- schema sanity checks (จับกรณีดึงชีตผิดแท็บ/จำนวนคอลัมน์ไม่ตรง) ----
-  if (itemsTable && (itemsTable.cols || []).length < 14) {
-    pushDiag(`ชีตสินค้า (${CONFIG.TABS.items.name}) มีจำนวนคอลัมน์น้อยกว่าที่คาดไว้ (${(itemsTable.cols || []).length}) — ตรวจสอบชื่อแท็บ/gid ใน CONFIG`);
+  if (detailTable && (detailTable.cols || []).length < 20) {
+    pushDiag(`ชีต ${CONFIG.TABS.detail.name} มีจำนวนคอลัมน์น้อยกว่าที่คาดไว้ (${(detailTable.cols || []).length}) — ตรวจสอบชื่อแท็บใน CONFIG`);
   }
-  if (billsTable && (billsTable.cols || []).length < 20) {
-    pushDiag(`ชีตบิล (${CONFIG.TABS.bills.name}) มีจำนวนคอลัมน์น้อยกว่าที่คาดไว้ (${(billsTable.cols || []).length}) — ตรวจสอบชื่อแท็บ/gid ใน CONFIG`);
-  }
-  if (hourlyTable && (hourlyTable.cols || []).length < 34) {
-    pushDiag(`ชีตรายชั่วโมง (${CONFIG.TABS.hourly.name}) มีจำนวนคอลัมน์น้อยกว่าที่คาดไว้ (${(hourlyTable.cols || []).length}) — ตรวจสอบชื่อแท็บ/gid ใน CONFIG`);
+  if (!billsTable) {
+    pushDiag(`ไม่พบชีต ${CONFIG.TABS.bills.name} — ตัวเลข "ลูกค้าเฉลี่ยต่อบิล" จะไม่แสดง ส่วนที่เหลือใช้งานได้ปกติ`);
   }
 
-  // ---- ช่วงวันที่ที่มีข้อมูลจริง ----
-  const allDates = [...DATA.items.map((r) => r.date), ...DATA.bills.map((r) => r.date)].filter(Boolean).sort();
+  const allDates = DATA.items.map((r) => r.date).filter(Boolean).sort();
   DATA.minDate = allDates.length ? allDates[0] : toISODate(new Date());
   DATA.maxDate = allDates.length ? allDates[allDates.length - 1] : toISODate(new Date());
 
   renderDiagnostics();
-  if (!itemsTable && !billsTable && !hourlyTable) {
+  if (!DATA.items.length) {
     setSyncState("err", "โหลดข้อมูลไม่สำเร็จ — ดูรายละเอียดด้านบน");
     return false;
   }
@@ -310,36 +315,85 @@ async function loadAllData() {
   return true;
 }
 
-// ชีตสินค้า (salebyproduct) — คอลัมน์ตามตำแหน่ง:
-// 0 วันที่, 1 รหัสสินค้า, 2 ชื่อสินค้า, 3 กลุ่ม, 4 หมวดสินค้า, 5 ต้นทุนเฉลี่ย, 6 ราคาขายเฉลี่ย,
-// 7 กำไรเฉลี่ย, 8 จำนวนการขาย, 9 ยอดก่อนลด, 10 ต้นทุน, 11 ส่วนลดสินค้า, 12 ราคาสุทธิ, 13 กำไร, 14 สาขา
-function cleanItems(rows) {
-  let shiftedCount = 0;
-  const out = rows
-    .map((r) => {
-      // ไฟล์ export จาก POS มี 2 รูปแบบปนกัน: บางช่วงคอลัมน์เลื่อนไป 1 ช่อง
-      // ทำให้ช่อง "จำนวนการขาย" เก็บยอดเงินแทนจำนวนจาน และจำนวนจริงไปอยู่ช่อง "กำไรเฉลี่ย"
-      // ตรวจจับจาก "ยอดก่อนลด" ที่เป็น 0 ทั้งที่มียอดขาย แล้วสลับค่ากลับให้ถูก
-      const grossCol = gNum(r, 9);
-      const qtyCol = gNum(r, 8);
-      const shifted = grossCol === 0 && qtyCol > 0;
-      if (shifted) shiftedCount++;
-      return {
-        date: gDateISO(r, 0),
-        name: gStr(r, 2),
-        category: gStr(r, 4),
-        qty: shifted ? gNum(r, 7) : qtyCol,
-        grossBeforeDiscount: shifted ? qtyCol : grossCol,
-        discount: shifted ? gNum(r, 10) : gNum(r, 11),
-        net: gNum(r, 12),
-        profit: gNum(r, 13),
-      };
-    })
-    .filter((r) => r.date && r.name);
-  if (shiftedCount > 0) {
-    pushDiag(`ชีตสินค้า (${CONFIG.TABS.items.name}) มี ${fmtInt(shiftedCount)} แถวที่คอลัมน์เลื่อนไป 1 ช่อง — ` +
-      `ระบบแก้ค่า "จำนวนการขาย" ให้อัตโนมัติแล้ว แต่ควร export ใหม่ให้ทุกแถวเป็นรูปแบบเดียวกันเพื่อความถูกต้องระยะยาว`);
+/* ชีต detail_perbill — 1 แถว = 1 รายการสินค้าในบิล
+   หาตำแหน่งคอลัมน์จากหัวคอลัมน์ก่อน ถ้าไม่เจอจึงใช้ตำแหน่งตามไฟล์ export เดิม */
+function cleanDetail(table) {
+  const rows = (table && table.rows) || [];
+  const i = {
+    date:  findCol(table, (l) => l.includes("วันที่"), 0),
+    time:  findCol(table, (l) => l.includes("เวลา"), 1),
+    bill:  findCol(table, (l) => l.includes("หมายเลขใบเสร็จ") || l.includes("ใบเสร็จ"), 2),
+    name:  findCol(table, (l) => l.includes("ชื่อเมนู") || l.includes("ชื่อสินค้า"), 6),
+    order: findCol(table, (l) => l.includes("ประเภทการสั่ง"), 7),
+    qty:   findCol(table, (l) => l === "จำนวน", 8),
+    gross: findCol(table, (l) => l.includes("ยอดก่อนลด"), 10),
+    disc:  findCol(table, (l) => l === "ส่วนลดสินค้า", 11),
+    net:   findCol(table, (l) => l.includes("ราคาสุทธิ"), 13),
+    pay:   findCol(table, (l) => l.includes("ประเภทการชำระ"), 19),
+    cat:   findCol(table, (l) => l.includes("หมวดสินค้า"), 25),
+  };
+
+  let voided = 0;
+  const out = [];
+  rows.forEach((r) => {
+    const pay = gStr(r, i.pay);
+    const date = gDateISO(r, i.date);
+    const name = gStr(r, i.name);
+    if (!date || !name) return;
+    if (pay === "Void All") { voided++; return; }
+    const category = gStr(r, i.cat) || "ไม่ระบุหมวด";
+    out.push({
+      date,
+      hour: gHour(r, i.time),
+      bill: gStr(r, i.bill) || `${date}#${out.length}`,
+      name,
+      category,
+      isLodging: CONFIG.LODGING_CATEGORIES.includes(category),
+      qty: gNum(r, i.qty),
+      grossBeforeDiscount: gNum(r, i.gross),
+      discount: gNum(r, i.disc),
+      net: gNum(r, i.net),
+      paymentType: pay || "ไม่ระบุ",
+      orderType: gStr(r, i.order) || "ไม่ระบุ",
+    });
+  });
+
+  if (out.length && out.filter((r) => r.hour !== null).length / out.length < 0.5) {
+    pushDiag(`อ่านค่าเวลาในชีต ${CONFIG.TABS.detail.name} ไม่สำเร็จ — กราฟที่แยกตามชั่วโมงและตามมื้อจะว่าง`);
   }
+  if (voided > 0) {
+    pushDiag(`ตัดรายการที่ถูกยกเลิก (Void All) ออก ${fmtInt(voided)} รายการ`);
+  }
+  return out;
+}
+
+/* รวมรายการสินค้าเป็นบิล แล้วจัดประเภทบิลตามสิ่งที่อยู่ในบิลนั้น
+   มีทั้งอาหารและที่พัก = mixed | มีเฉพาะอาหาร = food | มีเฉพาะที่พัก = lodging */
+function buildBills(lines) {
+  const map = new Map();
+  lines.forEach((r) => {
+    let b = map.get(r.bill);
+    if (!b) {
+      b = {
+        bill: r.bill, date: r.date, hour: r.hour,
+        net: 0, qty: 0, foodNet: 0, lodgingNet: 0, discount: 0,
+        hasFood: false, hasLodging: false, itemCount: 0,
+        paymentType: r.paymentType, orderType: r.orderType,
+      };
+      map.set(r.bill, b);
+    }
+    b.net += r.net;
+    b.qty += r.qty;
+    b.discount += r.discount;
+    b.itemCount++;
+    if (r.isLodging) { b.hasLodging = true; b.lodgingNet += r.net; }
+    else { b.hasFood = true; b.foodNet += r.net; }
+    if (b.hour === null && r.hour !== null) b.hour = r.hour;
+  });
+  const out = [...map.values()];
+  out.forEach((b) => {
+    b.type = b.hasFood && b.hasLodging ? "mixed" : b.hasLodging ? "lodging" : "food";
+  });
   return out;
 }
 
@@ -374,82 +428,15 @@ function cleanMenuCost(table) {
 
 // ชีตบิล (ยอดขายแยกตามบิล) — คอลัมน์ตามตำแหน่ง (0-based):
 // 0 วันที่ชำระเงิน, 1 เวลาที่ชำระเงิน, 19 รวมสุทธิ, 22 ประเภทการสั่ง, 24 ประเภทการชำระเงิน, 29 จำนวนลูกค้า
+/* ชีต "ยอดขายแยกตามบิล" — ใช้เฉพาะ "จำนวนลูกค้า" ซึ่งไม่มีในชีต detail_perbill */
 function cleanBills(table) {
   const rows = (table && table.rows) || [];
-  const iDate  = findCol(table, (l) => l.includes("วันที่"), 0);
-  const iNet   = findCol(table, (l) => l.includes("รวมสุทธิ"), 19);
-  const iOrder = findCol(table, (l) => l.includes("ประเภทการสั่ง"), 22);
-  const iPay   = findCol(table, (l) => l.includes("ประเภทการชำระ"), 24);
-  const iCust  = findCol(table, (l) => l.includes("จำนวนลูกค้า"), 29);
-  let iTime    = findCol(table, (l) => l.includes("เวลา"), 1);
-
-  const build = (timeIdx) => rows
-    .map((r) => ({
-      date: gDateISO(r, iDate),
-      hour: gHour(r, timeIdx),
-      net: gNum(r, iNet),
-      customers: gNum(r, iCust) || 1,
-      orderType: gStr(r, iOrder) || "ไม่ระบุ",
-      paymentType: gStr(r, iPay) || "ไม่ระบุ",
-    }))
-    .filter((r) => r.date && r.paymentType !== "Void All");
-
-  let out = build(iTime);
-  const withHour = out.filter((r) => r.hour !== null).length;
-  if (out.length && withHour / out.length < 0.5) {
-    const alt = detectHourColumn(table);
-    if (alt >= 0 && alt !== iTime) {
-      iTime = alt;
-      out = build(iTime);
-    } else {
-      pushDiag(
-        `อ่านค่าเวลาในชีตบิล (${CONFIG.TABS.bills.name}) ไม่สำเร็จ — กราฟ "ยอดขายตามชั่วโมง" และ "ยอดขายตามมื้อ" จะว่าง ` +
-        `(ตรวจสอบว่ามีคอลัมน์ "เวลาที่ชำระเงิน" และค่าในคอลัมน์อยู่ในรูปแบบ 10:23 หรือ 10:23:45)`
-      );
-    }
-  }
-  return out;
-}
-
-// ชีตรายชั่วโมง: 10 คอลัมน์คงที่ + 24 คอลัมน์ชั่วโมง (0-23) + สาขา — อ้างอิงด้วยตำแหน่ง
-function cleanHourly(table) {
-  const rows = (table && table.rows) || [];
-  const cols = (table && table.cols) || [];
-
-  // หา 24 คอลัมน์ชั่วโมงจากหัวคอลัมน์ ("0","1",... หรือ "0:00","1:00",...)
-  let startIdx = -1;
-  for (let i = 0; i + 23 < cols.length; i++) {
-    let ok = true;
-    for (let h = 0; h < 24; h++) {
-      const lb = normLabel(cols[i + h] && cols[i + h].label);
-      const m = lb.match(/^(\d{1,2})(:00(:00)?)?$/);
-      if (!m || parseInt(m[1], 10) !== h) { ok = false; break; }
-    }
-    if (ok) { startIdx = i; break; }
-  }
-  if (startIdx < 0) startIdx = 10; // fallback: ตำแหน่งเดิมตามไฟล์ export
-
-  const iName = findCol(table, (l) => l.includes("ชื่อสินค้า"), 1);
-  const iCat  = findCol(table, (l) => l.includes("หมวด"), 3);
-
-  const out = rows
-    .map((r) => {
-      const name = gStr(r, iName);
-      const category = gStr(r, iCat);
-      if (!name) return null;
-      const hours = [];
-      for (let h = 0; h < 24; h++) hours.push(gNum(r, startIdx + h));
-      return { name, category, hours };
-    })
-    .filter(Boolean);
-
-  if (out.length && !out.some((r) => r.hours.some((v) => v > 0))) {
-    pushDiag(
-      `อ่านตัวเลขรายชั่วโมงจากชีต (${CONFIG.TABS.hourly.name}) ไม่ได้เลย — กราฟ "ช่วงเวลาขายดี เฉพาะร้านอาหาร" จะว่าง ` +
-      `(ตรวจสอบว่าหัวคอลัมน์ชั่วโมงยังเป็น 0-23 ตามไฟล์ export เดิม)`
-    );
-  }
-  return out;
+  const iDate = findCol(table, (l) => l.includes("วันที่"), 0);
+  const iCust = findCol(table, (l) => l.includes("จำนวนลูกค้า"), 29);
+  const iPay  = findCol(table, (l) => l.includes("ประเภทการชำระ"), 24);
+  return rows
+    .map((r) => ({ date: gDateISO(r, iDate), customers: gNum(r, iCust), pay: gStr(r, iPay) }))
+    .filter((r) => r.date && r.pay !== "Void All" && r.customers > 0);
 }
 
 /* ========================================================================
@@ -483,14 +470,16 @@ function previousRange() {
 /* ========================================================================
    Aggregations
    ======================================================================== */
-function isRestaurant(category) { return !CONFIG.RESORT_CATEGORIES.includes(category); }
+// "ร้านอาหาร" = ทุกหมวดที่ไม่ใช่ที่พัก
+function isRestaurant(category) { return !CONFIG.LODGING_CATEGORIES.includes(category); }
 
 function computeCore(range) {
   const items = DATA.items.filter((r) => r.date >= range.start && r.date <= range.end);
   const bills = DATA.bills.filter((r) => r.date >= range.start && r.date <= range.end);
+  const billsMeta = DATA.billsMeta.filter((r) => r.date >= range.start && r.date <= range.end);
 
-  const restaurantItems = items.filter((r) => isRestaurant(r.category));
-  const resortItems = items.filter((r) => !isRestaurant(r.category));
+  const restaurantItems = items.filter((r) => !r.isLodging);
+  const resortItems = items.filter((r) => r.isLodging);
 
   const restaurantRevenue = restaurantItems.reduce((s, r) => s + r.net, 0);
   const restaurantDiscount = restaurantItems.reduce((s, r) => s + r.discount, 0);
@@ -501,7 +490,30 @@ function computeCore(range) {
   const billCount = bills.length;
   const billNetTotal = bills.reduce((s, r) => s + r.net, 0);
   const avgPerBill = billCount ? billNetTotal / billCount : 0;
-  const avgCustomers = billCount ? bills.reduce((s, r) => s + r.customers, 0) / billCount : 0;
+  const avgCustomers = billsMeta.length
+    ? billsMeta.reduce((s, r) => s + r.customers, 0) / billsMeta.length
+    : null;
+
+  // ---- สรุปตามประเภทบิล ----
+  const byBillType = {};
+  CONFIG.BILL_TYPES.forEach((t) => {
+    byBillType[t.key] = { key: t.key, label: t.label, desc: t.desc, varName: t.varName,
+                          count: 0, net: 0, foodNet: 0, lodgingNet: 0, items: 0 };
+  });
+  bills.forEach((b) => {
+    const t = byBillType[b.type];
+    if (!t) return;
+    t.count++;
+    t.net += b.net;
+    t.foodNet += b.foodNet;
+    t.lodgingNet += b.lodgingNet;
+    t.items += b.itemCount;
+  });
+  Object.values(byBillType).forEach((t) => {
+    t.avgPerBill = t.count ? t.net / t.count : 0;
+    t.pctBills = billCount ? (t.count / billCount) * 100 : 0;
+    t.pctNet = billNetTotal ? (t.net / billNetTotal) * 100 : 0;
+  });
 
   const topByRevenue = {};
   const topByQty = {};
@@ -514,9 +526,9 @@ function computeCore(range) {
   const topItemName = Object.keys(topByRevenue).sort((a, b) => topByRevenue[b] - topByRevenue[a])[0] || "—";
 
   return {
-    restaurantItems, resortItems, bills,
+    items, restaurantItems, resortItems, bills, billsMeta,
     restaurantRevenue, restaurantDiscount, resortRevenue, avgDailyRevenue, daysInRange,
-    billCount, billNetTotal, avgPerBill, avgCustomers,
+    billCount, billNetTotal, avgPerBill, avgCustomers, byBillType,
     topByRevenue, topByQty, itemCategory, topItemName,
     topItemQty: topByQty[topItemName] || 0,
   };
@@ -635,7 +647,7 @@ function renderKPIs(cur, prev) {
       <div class="label">ยอดขายร้านอาหาร</div>
       <div class="value">${fmtBaht(cur.restaurantRevenue)} <small>บาท</small></div>
       ${deltaHtml(pctDelta(cur.restaurantRevenue, prev.restaurantRevenue))}
-      <div class="foot">ตัดยอดรีสอร์ท/ห้องพักออกแล้ว</div>
+      <div class="foot">รวมทุกรายการที่ไม่ใช่ที่พัก แยกรายบิลจากชีต detail_perbill</div>
     </div>
     <div class="kpi">
       <div class="label">ยอดขายเฉลี่ยต่อวัน</div>
@@ -644,16 +656,16 @@ function renderKPIs(cur, prev) {
       <div class="foot">เฉพาะร้านอาหาร เฉลี่ยจาก ${cur.daysInRange} วันที่เลือก</div>
     </div>
     <div class="kpi">
-      <div class="label">จำนวนบิล</div>
+      <div class="label">จำนวนบิลทั้งหมด</div>
       <div class="value">${fmtInt(cur.billCount)} <small>บิล</small></div>
       ${deltaHtml(pctDelta(cur.billCount, prev.billCount))}
-      <div class="foot">รวมทุกบิลจาก POS (ร้านอาหาร+รีสอร์ท ไม่นับบิล Void)</div>
+      <div class="foot">ทุกประเภทบิล ไม่นับบิลที่ถูกยกเลิก · ดูแยกประเภทได้ด้านล่าง</div>
     </div>
     <div class="kpi">
       <div class="label">ยอดขายเฉลี่ยต่อบิล</div>
       <div class="value">${fmtBaht(cur.avgPerBill)} <small>บาท</small></div>
       ${deltaHtml(pctDelta(cur.avgPerBill, prev.avgPerBill))}
-      <div class="foot">รวมทุกบิลจาก POS (ร้านอาหาร+รีสอร์ท)</div>
+      <div class="foot">เฉลี่ยจากทุกประเภทบิล · ดูแยกประเภทได้ด้านล่าง</div>
     </div>
     <div class="kpi">
       <div class="label">เมนูขายดีที่สุด</div>
@@ -662,13 +674,13 @@ function renderKPIs(cur, prev) {
     </div>
     <div class="kpi">
       <div class="label">ลูกค้าเฉลี่ยต่อบิล</div>
-      <div class="value">${cur.avgCustomers.toFixed(1)} <small>คน</small></div>
-      <div class="foot">จากรายงานบิล (ทุกบิล)</div>
+      <div class="value">${cur.avgCustomers === null ? "—" : cur.avgCustomers.toFixed(1)} <small>คน</small></div>
+      <div class="foot">${cur.avgCustomers === null ? "ไม่มีข้อมูลจำนวนลูกค้าในช่วงนี้" : `จากรายงาน ${escapeHtml(CONFIG.TABS.bills.name)} (${fmtInt(cur.billsMeta.length)} บิลที่บันทึกจำนวนลูกค้าไว้)`}</div>
     </div>
     <div class="kpi muted">
       <div class="label">ยอดขายรีสอร์ท</div>
       <div class="value">${fmtBaht(cur.resortRevenue)} <small>บาท</small></div>
-      <div class="foot">ไม่รวมในยอดร้านอาหารด้านบน</div>
+      <div class="foot">เฉพาะรายการหมวดที่พัก แม้จะอยู่ในบิลเดียวกับอาหารก็แยกออกได้แล้ว</div>
     </div>
   `;
 }
@@ -677,6 +689,123 @@ function escapeHtml(s) {
   const d = document.createElement("div");
   d.textContent = s;
   return d.innerHTML;
+}
+
+/* ========================================================================
+   Render: สรุปตามประเภทบิล
+   ======================================================================== */
+function renderBillTypes(cur) {
+  const grid = document.getElementById("billTypeKpi");
+  if (grid) {
+    grid.innerHTML = CONFIG.BILL_TYPES.map((t) => {
+      const d = cur.byBillType[t.key];
+      return `<div class="kpi me-kpi" style="border-left:4px solid ${cssVar(t.varName)}">
+        <div class="label">${escapeHtml(t.label)}</div>
+        <div class="value">${fmtInt(d.count)} <small>บิล</small></div>
+        <div class="foot">${fmtBaht(d.avgPerBill)} บาท/บิล · ยอดรวม ${fmtBaht(d.net)} บาท (${d.pctNet.toFixed(1)}% ของยอดทั้งหมด)</div>
+      </div>`;
+    }).join("");
+  }
+
+  const tbody = document.querySelector("#billTypeTable tbody");
+  if (tbody) {
+    const rows = CONFIG.BILL_TYPES.map((t) => cur.byBillType[t.key]);
+    tbody.innerHTML = rows.map((d) => `<tr>
+      <td style="text-align:left;"><span class="me-badge" style="background:${cssVar(d.varName)}">${escapeHtml(d.label)}</span></td>
+      <td style="text-align:left;font-size:12px;color:var(--text-secondary);">${escapeHtml(d.desc)}</td>
+      <td>${fmtInt(d.count)}</td>
+      <td>${d.pctBills.toFixed(1)}%</td>
+      <td>${fmtBaht(d.net)}</td>
+      <td>${d.pctNet.toFixed(1)}%</td>
+      <td><strong>${fmtBaht(d.avgPerBill)}</strong></td>
+      <td>${fmtBaht(d.foodNet)}</td>
+      <td>${fmtBaht(d.lodgingNet)}</td>
+    </tr>`).join("") + `<tr class="total-row">
+      <td style="text-align:left;"><strong>รวมทั้งหมด</strong></td>
+      <td></td>
+      <td><strong>${fmtInt(cur.billCount)}</strong></td>
+      <td>100.0%</td>
+      <td><strong>${fmtBaht(cur.billNetTotal)}</strong></td>
+      <td>100.0%</td>
+      <td><strong>${fmtBaht(cur.avgPerBill)}</strong></td>
+      <td><strong>${fmtBaht(cur.restaurantRevenue)}</strong></td>
+      <td><strong>${fmtBaht(cur.resortRevenue)}</strong></td>
+    </tr>`;
+  }
+
+  // โดนัท: สัดส่วนยอดขายตามประเภทบิล
+  const labels = CONFIG.BILL_TYPES.map((t) => t.label);
+  const values = CONFIG.BILL_TYPES.map((t) => cur.byBillType[t.key].net);
+  const colors = CONFIG.BILL_TYPES.map((t) => cssVar(t.varName));
+  destroyChart("billType");
+  charts.billType = safeNewChart(document.getElementById("chartBillType"), {
+    type: "doughnut",
+    data: { labels, datasets: [{ data: values, backgroundColor: colors, borderColor: cssVar("--surface-1"), borderWidth: 2 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: "58%",
+      plugins: {
+        legend: { position: "bottom", labels: { color: baseTextColor(), boxWidth: 10, usePointStyle: true, pointStyle: "circle", font: { size: 11 } } },
+        datalabels: { display: false },
+        tooltip: Object.assign(tooltipBase(), {
+          callbacks: {
+            label: (item) => {
+              const tot = values.reduce((a, b) => a + b, 0);
+              const pct = tot ? (item.raw / tot) * 100 : 0;
+              return `${fmtBaht(item.raw)} บาท (${pct.toFixed(1)}%)`;
+            },
+          },
+        }),
+      },
+    },
+  });
+}
+
+/* ========================================================================
+   Render: จำนวนบิลตามชั่วโมง แยกประเภทบิล
+   ======================================================================== */
+function renderBillTypeByHour(cur) {
+  const buckets = {};
+  CONFIG.BILL_TYPES.forEach((t) => { buckets[t.key] = new Array(24).fill(0); });
+  cur.bills.forEach((b) => {
+    if (b.hour === null || !buckets[b.type]) return;
+    buckets[b.type][b.hour]++;
+  });
+  const labels = new Array(24).fill(0).map((_, h) => pad2(h));
+
+  destroyChart("hourRest");
+  charts.hourRest = safeNewChart(document.getElementById("chartBillTypeHour"), {
+    type: "bar",
+    data: {
+      labels,
+      datasets: CONFIG.BILL_TYPES.map((t) => ({
+        label: t.label,
+        data: buckets[t.key],
+        backgroundColor: cssVar(t.varName),
+        stack: "b",
+        barThickness: 14,
+      })),
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: "bottom", labels: { color: baseTextColor(), boxWidth: 10, usePointStyle: true, pointStyle: "circle", font: { size: 11 } } },
+        datalabels: { display: false },
+        tooltip: Object.assign(tooltipBase(), {
+          callbacks: { title: (items) => `${items[0].label}:00 น.`, label: (item) => `${item.dataset.label}: ${fmtInt(item.raw)} บิล` },
+        }),
+      },
+      scales: commonScales({
+        x: { stacked: true, grid: { display: false }, ticks: { color: baseMutedColor() }, border: { display: false } },
+        y: { stacked: true, beginAtZero: true, grid: { color: baseGridColor() }, ticks: { color: baseMutedColor(), callback: (v) => fmtInt(v) }, border: { display: false } },
+      }),
+    },
+  });
+  renderTableView("tblHourRest",
+    ["ชั่วโมง", ...CONFIG.BILL_TYPES.map((t) => `${t.label} (บิล)`), "รวม (บิล)"],
+    labels.map((l, h) => {
+      const vals = CONFIG.BILL_TYPES.map((t) => buckets[t.key][h]);
+      return [`${l}:00`, ...vals.map(fmtInt), fmtInt(vals.reduce((a, b) => a + b, 0))];
+    }));
 }
 
 /* ========================================================================
@@ -840,28 +969,43 @@ function renderCategory(cur) {
    Render: Hourly (all POS, respects filter)
    ======================================================================== */
 function renderHourAll(range) {
-  const hours = new Array(24).fill(0);
-  DATA.bills.forEach((r) => {
+  const food = new Array(24).fill(0);
+  const lodging = new Array(24).fill(0);
+  DATA.items.forEach((r) => {
     if (r.date < range.start || r.date > range.end) return;
     if (r.hour === null) return;
-    hours[r.hour] += r.net;
+    if (r.isLodging) lodging[r.hour] += r.net;
+    else food[r.hour] += r.net;
   });
-  const labels = hours.map((_, h) => `${pad2(h)}`);
+  const labels = food.map((_, h) => `${pad2(h)}`);
 
   destroyChart("hourAll");
   charts.hourAll = safeNewChart(document.getElementById("chartHourAll"), {
     type: "bar",
-    data: { labels, datasets: [{ data: hours, backgroundColor: cssVar("--seq-450"), borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: "bottom", barThickness: 14 }] },
+    data: {
+      labels,
+      datasets: [
+        { label: "ร้านอาหาร", data: food, backgroundColor: cssVar("--series-1"), stack: "h", barThickness: 14 },
+        { label: "ที่พัก", data: lodging, backgroundColor: cssVar("--series-3"), stack: "h", barThickness: 14 },
+      ],
+    },
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: {
-        legend: { display: false },
-        tooltip: Object.assign(tooltipBase(), { callbacks: { title: (items) => `${items[0].label}:00 น.`, label: (item) => `${fmtBaht(item.raw)} บาท` } }),
+        legend: { position: "bottom", labels: { color: baseTextColor(), boxWidth: 10, usePointStyle: true, pointStyle: "circle", font: { size: 11 } } },
+        datalabels: { display: false },
+        tooltip: Object.assign(tooltipBase(), {
+          callbacks: { title: (items) => `${items[0].label}:00 น.`, label: (item) => `${item.dataset.label}: ${fmtBaht(item.raw)} บาท` },
+        }),
       },
-      scales: commonScales(),
+      scales: commonScales({
+        x: { stacked: true, grid: { display: false }, ticks: { color: baseMutedColor() }, border: { display: false } },
+        y: { stacked: true, beginAtZero: true, grid: { color: baseGridColor() }, ticks: { color: baseMutedColor(), callback: (v) => fmtCompact(v) }, border: { display: false } },
+      }),
     },
   });
-  renderTableView("tblHourAll", ["ชั่วโมง", "ยอดขาย (บาท)"], hours.map((v, h) => [`${pad2(h)}:00`, fmtBaht(v)]));
+  renderTableView("tblHourAll", ["ชั่วโมง", "ร้านอาหาร (บาท)", "ที่พัก (บาท)", "รวม (บาท)"],
+    labels.map((l, h) => [`${l}:00`, fmtBaht(food[h]), fmtBaht(lodging[h]), fmtBaht(food[h] + lodging[h])]));
 }
 
 /* ========================================================================
@@ -869,9 +1013,9 @@ function renderHourAll(range) {
    ======================================================================== */
 function renderMeal(range) {
   const hours = new Array(24).fill(0);
-  DATA.bills.forEach((r) => {
+  DATA.items.forEach((r) => {
     if (r.date < range.start || r.date > range.end) return;
-    if (r.hour === null) return;
+    if (r.hour === null || r.isLodging) return;
     hours[r.hour] += r.net;
   });
   const values = CONFIG.MEAL_PERIODS.map((p) => {
@@ -912,33 +1056,6 @@ function renderMeal(range) {
     },
   });
   renderTableView("tblMeal", ["มื้อ", "ยอดขาย (บาท)"], labels.map((l, i) => [l, fmtBaht(values[i])]));
-}
-
-/* ========================================================================
-   Render: Restaurant-only hourly pattern (static, whole period, by qty)
-   ======================================================================== */
-function renderHourRestaurant() {
-  const hours = new Array(24).fill(0);
-  DATA.hourly.forEach((r) => {
-    if (!isRestaurant(r.category)) return;
-    r.hours.forEach((v, h) => { hours[h] += v; });
-  });
-  const labels = hours.map((_, h) => pad2(h));
-
-  destroyChart("hourRest");
-  charts.hourRest = safeNewChart(document.getElementById("chartHourRestaurant"), {
-    type: "bar",
-    data: { labels, datasets: [{ data: hours, backgroundColor: cssVar("--series-8"), borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: "bottom", barThickness: 14 }] },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: Object.assign(tooltipBase(), { callbacks: { title: (items) => `${items[0].label}:00 น.`, label: (item) => `${fmtInt(item.raw)} รายการ` } }),
-      },
-      scales: commonScales({ y: { beginAtZero: true, grid: { color: baseGridColor() }, ticks: { color: baseMutedColor(), callback: (v) => fmtInt(v) } } }),
-    },
-  });
-  renderTableView("tblHourRest", ["ชั่วโมง", "จำนวนรายการ"], hours.map((v, h) => [`${pad2(h)}:00`, fmtInt(v)]));
 }
 
 /* ========================================================================
@@ -1495,12 +1612,13 @@ function renderAll() {
   const cur = computeCore(currentRange);
   const prev = computeCore(previousRange());
   renderKPIs(cur, prev);
+  renderBillTypes(cur);
   renderDaily(currentRange);
   renderTopItems(cur);
   renderCategory(cur);
   renderHourAll(currentRange);
   renderMeal(currentRange);
-  renderHourRestaurant();
+  renderBillTypeByHour(cur);
   renderWeekday(currentRange);
   renderPaymentAndOrderType(cur);
   renderMenuEngineering(currentRange);
